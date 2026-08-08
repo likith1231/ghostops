@@ -1,7 +1,8 @@
 # GhostOps — Alertmanager Configuration
-# Minimal config with a "null" receiver — alerts are accepted and silently
-# dropped for now.  Wire this to the FastAPI webhook receiver later by
-# adding a webhook_configs entry under the "ghostops-webhook" receiver.
+# Routes firing alerts to the FastAPI ingestion service running on the host
+# machine.  The URL uses the Docker gateway IP (172.18.0.1) because the
+# Alertmanager pod runs inside a kind cluster (which is a Docker container)
+# and cannot reach the host's localhost.
 
 ---
 apiVersion: v1
@@ -15,20 +16,23 @@ metadata:
 data:
   alertmanager.yml: |
     # =============================================================
-    # Alertmanager — minimal config (no real receiver yet)
+    # Alertmanager — routes alerts to GhostOps FastAPI webhook
     # =============================================================
     global:
       resolve_timeout: 5m
 
     route:
-      receiver: "null"
+      receiver: "ghostops-webhook"
       group_by: ["alertname", "severity"]
       group_wait: 10s
       group_interval: 5m
       repeat_interval: 1h
 
     receivers:
-      - name: "null"
-        # No notification targets configured.
-        # TODO: add webhook_configs pointing to the FastAPI ingestion service
-        #       once that service is deployed.
+      - name: "ghostops-webhook"
+        webhook_configs:
+          # 172.18.0.1 is the Docker bridge gateway — it routes to the
+          # host machine where the FastAPI server listens on port 8000.
+          # Verify with: docker network inspect kind --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+          - url: "http://172.18.0.1:8000/webhook/alert"
+            send_resolved: true

@@ -14,8 +14,8 @@ Safety guarantees
 * The container has no network access (``network_mode="none"``) and runs
   with reduced capabilities.
 
-LLM: Claude 3.5 Sonnet (Anthropic) — used only to interpret the test output
-and produce a structured verdict, not to execute code.
+LLM: Gemini (Google, free tier) via CrewAI's native ``LLM`` class — used
+only to interpret the test output and produce a structured verdict.
 """
 
 from __future__ import annotations
@@ -26,12 +26,11 @@ from pathlib import Path
 from textwrap import dedent
 
 import docker
-from crewai import Agent, Task
+from crewai import Agent, LLM, Task
 from docker.errors import ContainerError, ImageNotFound
-from langchain_anthropic import ChatAnthropic
 
 from agents.config import (
-    ANTHROPIC_API_KEY,
+    GOOGLE_API_KEY,
     PRIMARY_MODEL,
     SANDBOX_IMAGE,
     SANDBOX_TIMEOUT_SECONDS,
@@ -162,11 +161,10 @@ def _run_tests_in_sandbox(
 # ---------------------------------------------------------------------------
 def build_validation_agent() -> Agent:
     """Instantiate the Validation Officer CrewAI Agent."""
-    llm = ChatAnthropic(
+    llm = LLM(
         model=PRIMARY_MODEL,
-        api_key=ANTHROPIC_API_KEY,
+        api_key=GOOGLE_API_KEY,
         temperature=0.0,
-        max_tokens=2048,
     )
 
     return Agent(

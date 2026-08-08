@@ -4,6 +4,10 @@ GhostOps Agent Configuration
 
 Loads API keys from the project-root .env file and exposes model-name
 constants so they can be changed in exactly one place.
+
+Currently running on Gemini (free tier) — swap PRIMARY_MODEL and the LLM
+client in diagnostic_reasoner.py / patch_generator.py /
+validation_officer.py back to Claude once Anthropic billing is set up.
 """
 
 import os
@@ -25,17 +29,17 @@ load_dotenv(dotenv_path=_env_path)
 ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY: str = os.environ.get("GOOGLE_API_KEY", "")
 
-if not ANTHROPIC_API_KEY:
+if not GOOGLE_API_KEY:
     raise EnvironmentError(
-        "ANTHROPIC_API_KEY is not set. "
+        "GOOGLE_API_KEY is not set. "
         f"Make sure it exists in {_env_path} or is exported in your shell."
     )
 
-# Google key is optional (fallback model) — warn instead of crashing.
-if not GOOGLE_API_KEY:
+# Anthropic key is optional for now — warn instead of crashing.
+if not ANTHROPIC_API_KEY:
     import warnings
     warnings.warn(
-        "GOOGLE_API_KEY is not set — the Gemini fallback model will be unavailable.",
+        "ANTHROPIC_API_KEY is not set — Claude models will be unavailable.",
         stacklevel=2,
     )
 
@@ -43,8 +47,8 @@ if not GOOGLE_API_KEY:
 # Model constants
 # Swap these values to change models across the entire pipeline.
 # ---------------------------------------------------------------------------
-PRIMARY_MODEL: str = "claude-sonnet-5"  # Anthropic Claude 3.5 Sonnet
-FALLBACK_MODEL: str = "gemini-1.5-pro"             # Google Gemini 1.5 Pro
+PRIMARY_MODEL: str = "gemini/gemini-3-flash-preview"         # Google Gemini (free tier) — gemini/ prefix required by litellm
+FALLBACK_MODEL: str = "gemini-1.5-pro"              # Google Gemini 1.5 Pro
 
 # ---------------------------------------------------------------------------
 # Docker / sandbox settings

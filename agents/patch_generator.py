@@ -13,7 +13,7 @@ Supported root causes
 - **ci_test_failure** (C4) — fix the regression in the application code (NOT
   the test) unless the test itself is genuinely wrong.
 
-LLM: Claude 3.5 Sonnet (Anthropic).
+LLM: Gemini (Google, free tier) via CrewAI's native ``LLM`` class.
 """
 
 from __future__ import annotations
@@ -21,10 +21,9 @@ from __future__ import annotations
 import json
 from textwrap import dedent
 
-from crewai import Agent, Task
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM, Task
 
-from agents.config import ANTHROPIC_API_KEY, PRIMARY_MODEL
+from agents.config import GOOGLE_API_KEY, PRIMARY_MODEL
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -59,11 +58,10 @@ PATCHGEN_SYSTEM_PROMPT: str = dedent("""\
 
 def build_patch_agent() -> Agent:
     """Instantiate the Patch Generator CrewAI Agent."""
-    llm = ChatAnthropic(
+    llm = LLM(
         model=PRIMARY_MODEL,
-        api_key=ANTHROPIC_API_KEY,
+        api_key=GOOGLE_API_KEY,
         temperature=0.0,
-        max_tokens=4096,
     )
 
     return Agent(

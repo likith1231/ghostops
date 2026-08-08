@@ -10,7 +10,7 @@ into one of:
 It also produces a short structured diagnosis that cites the specific log
 lines and metric values that led to the conclusion.
 
-LLM: Claude 3.5 Sonnet (Anthropic) via the CrewAI ``ChatAnthropic`` wrapper.
+LLM: Gemini (Google) via CrewAI's native ``LLM`` class (litellm backend).
 """
 
 from __future__ import annotations
@@ -18,10 +18,9 @@ from __future__ import annotations
 import json
 from textwrap import dedent
 
-from crewai import Agent, Task
-from langchain_anthropic import ChatAnthropic
+from crewai import Agent, LLM, Task
 
-from agents.config import ANTHROPIC_API_KEY, PRIMARY_MODEL
+from agents.config import GOOGLE_API_KEY, PRIMARY_MODEL
 
 # ---------------------------------------------------------------------------
 # System prompt — intentionally narrow to avoid hallucinated speculation.
@@ -55,11 +54,10 @@ REASONER_SYSTEM_PROMPT: str = dedent("""\
 
 def build_reasoner_agent() -> Agent:
     """Instantiate the Diagnostic Reasoner CrewAI Agent."""
-    llm = ChatAnthropic(
+    llm = LLM(
         model=PRIMARY_MODEL,
-        api_key=ANTHROPIC_API_KEY,
+        api_key=GOOGLE_API_KEY,
         temperature=0.0,
-        max_tokens=2048,
     )
 
     return Agent(
