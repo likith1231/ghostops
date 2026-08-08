@@ -43,7 +43,7 @@ if not GOOGLE_API_KEY:
 # Model constants
 # Swap these values to change models across the entire pipeline.
 # ---------------------------------------------------------------------------
-PRIMARY_MODEL: str = "claude-3-5-sonnet-20241022"  # Anthropic Claude 3.5 Sonnet
+PRIMARY_MODEL: str = "claude-sonnet-5"  # Anthropic Claude 3.5 Sonnet
 FALLBACK_MODEL: str = "gemini-1.5-pro"             # Google Gemini 1.5 Pro
 
 # ---------------------------------------------------------------------------

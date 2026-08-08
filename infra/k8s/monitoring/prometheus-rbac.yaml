@@ -1,0 +1,56 @@
+# GhostOps — Prometheus RBAC
+# Gives Prometheus the minimum permissions needed for Kubernetes service
+# discovery (finding pods/services/endpoints to scrape) and for scraping
+# kubelet/cAdvisor metrics via the nodes/proxy sub-resource.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ghostops
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ghostops
+rules:
+  # Service discovery — Prometheus needs to list/watch these to find
+  # scrape targets via kubernetes_sd_configs.
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy        # required for scraping kubelet/cAdvisor metrics
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+
+  # Prometheus reads ConfigMaps for some service-discovery metadata.
+  - apiGroups: [""]
+    resources:
+      - configmaps
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ghostops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring

@@ -1,0 +1,121 @@
+# GhostOps — Prometheus Configuration
+# Two ConfigMaps:
+#   1. prometheus-config  — main prometheus.yml (scrape jobs + alerting)
+#   2. prometheus-rules   — alert rule files mounted at /etc/prometheus/rules/
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ghostops
+data:
+  prometheus.yml: |
+    # ===================================================================
+    # GhostOps Prometheus Configuration (plain manifest — no Operator)
+    # ===================================================================
+
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    # ---------------------------------------------------------------
+    # Alerting — forward firing alerts to Alertmanager
+    # ---------------------------------------------------------------
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - "alertmanager.monitoring.svc.cluster.local:9093"
+
+    # ---------------------------------------------------------------
+    # Rule files — evaluated on the evaluation_interval cadence
+    # ---------------------------------------------------------------
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    # ---------------------------------------------------------------
+    # Scrape jobs
+    # ---------------------------------------------------------------
+    scrape_configs:
+
+      # ---------- Prometheus self-monitoring ----------
+      - job_name: "prometheus"
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      # ---------- kubelet / cAdvisor ----------
+      # Uses the Kubernetes API server as a proxy to reach each node's
+      # kubelet metrics endpoint.  This is the source for
+      # container_memory_working_set_bytes and
+      # container_spec_memory_limit_bytes, which feed the OOM alert.
+      - job_name: "kubelet-cadvisor"
+        scheme: https
+        tls_config:
+          # The ServiceAccount token is auto-mounted by Kubernetes.
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true      # kind's kubelet cert is self-signed
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        # Rewrite to hit the /metrics/cadvisor path on each kubelet.
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
+      # ---------- sample-app ----------
+      # Discovers endpoints labelled with the "sample-app" service in the
+      # default namespace.  The sample-app should expose a /metrics
+      # endpoint (e.g. via prometheus_flask_instrumentator or similar).
+      - job_name: "sample-app"
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - default
+        relabel_configs:
+          # Keep only endpoints belonging to the "sample-app" service.
+          - source_labels:
+              [__meta_kubernetes_service_name]
+            regex: sample-app
+            action: keep
+          # Expose the pod name as a label for alert matching.
+          - source_labels:
+              [__meta_kubernetes_pod_name]
+            target_label: pod
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: ghostops
+data:
+  alert-rules.yml: |
+    # GhostOps alert rules — evaluated by Prometheus every 15 s
+    groups:
+      - name: ghostops.rules
+        rules:
+          - alert: SampleAppHighMemory
+            expr: |
+              container_memory_working_set_bytes{pod=~"sample-app.*"}
+              / container_spec_memory_limit_bytes{pod=~"sample-app.*"} > 0.8
+            for: 30s
+            labels:
+              severity: critical
+              component: sample-app
+            annotations:
+              summary: "sample-app memory usage above 80% of limit"
+              description: "Pod {{ $labels.pod }} is at risk of OOMKill"
