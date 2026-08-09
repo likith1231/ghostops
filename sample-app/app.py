@@ -9,7 +9,6 @@ def health():
 
 @app.route("/leak")
 def leak():
-    leak_store.append(bytearray(10 * 1024 * 1024))
     return jsonify(status="leaked", total_mb=len(leak_store) * 10)
 
 @app.route("/")

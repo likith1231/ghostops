@@ -78,7 +78,7 @@ def _build_pr_body(
     """Compose a rich Markdown PR description."""
     alert_type = failure_context.get("alert_type", "unknown")
     root_cause = diagnosis.get("root_cause", "unknown")
-    confidence = diagnosis.get("confidence", "unknown")
+    confidence = str(diagnosis.get("confidence", "unknown"))
     summary = diagnosis.get("summary", "(no summary)")
     explanation = patch.get("explanation", "(no explanation)")
 
@@ -159,8 +159,8 @@ def _build_commit_message(diagnosis: dict[str, Any]) -> str:
     # Body
     body_parts = [
         "",
-        "Root cause: " + root_cause,
-        "Confidence: " + diagnosis.get("confidence", "unknown"),
+        f"Root cause: {root_cause}",
+        f"Confidence: {diagnosis.get('confidence', 'unknown')}",
         "",
         "Evidence:",
     ]
