@@ -130,11 +130,36 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
     validation_result = _safe_json_loads(str(validation_result_raw))
     logger.info("Validation passed: %s", validation_result.get("passed"))
 
+    # ----- 4. DEPLOYMENT ACTION (auto-PR on validated pass) -----------
+    pr_result: dict[str, Any] = {"pr_created": False, "reason": "skipped"}
+
+    if validation_result.get("passed") is True:
+        logger.info("Stage 4/4 — Validation passed, creating PR …")
+        try:
+            from agents.deployer import create_pr
+
+            pr_result = create_pr(
+                pipeline_result={
+                    "diagnosis": diagnosis,
+                    "patch": patch,
+                    "validation_result": validation_result,
+                },
+                failure_context=failure_context,
+            )
+            logger.info("PR result: %s", pr_result)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Deployer failed: %s", exc, exc_info=True)
+            pr_result = {"pr_created": False, "reason": str(exc)}
+    else:
+        logger.info("Validation did NOT pass — skipping PR creation.")
+        pr_result = {"pr_created": False, "reason": "validation_failed"}
+
     # ----- ASSEMBLE FINAL RESULT -------------------------------------
     return {
         "diagnosis": diagnosis,
         "patch": patch,
         "validation_result": validation_result,
+        "pr_result": pr_result,
     }
 
 

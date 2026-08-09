@@ -43,6 +43,16 @@ if not ANTHROPIC_API_KEY:
         stacklevel=2,
     )
 
+GITHUB_TOKEN: str = os.environ.get("GITHUB_TOKEN", "")
+GITHUB_REPO: str = os.environ.get("GITHUB_REPO", "likith1231/ghostops")
+
+if not GITHUB_TOKEN:
+    import warnings
+    warnings.warn(
+        "GITHUB_TOKEN is not set — auto-PR creation will be disabled.",
+        stacklevel=2,
+    )
+
 # ---------------------------------------------------------------------------
 # Model constants
 # Swap these values to change models across the entire pipeline.

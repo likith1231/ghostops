@@ -1,2 +1,3 @@
 infra/kind/charts/
 .env
+__pycache__/
