@@ -1,0 +1,39 @@
+# ==========================================================================
+# GhostOps ArgoCD Application
+# ==========================================================================
+# Points ArgoCD at the infra/k8s/ directory in the GhostOps repo.
+# On every merge to main, ArgoCD auto-syncs the cluster state to match
+# the manifests in that directory — including sample-app and monitoring.
+#
+# Sync policy: automated with prune (removes orphaned resources) and
+# self-heal (reverts manual kubectl edits back to the Git-defined state).
+# ==========================================================================
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ghostops
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: ghostops
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/likith1231/ghostops.git
+    targetRevision: main
+    path: infra/k8s
+    directory:
+      recurse: true          # picks up infra/k8s/monitoring/ subdirectory too
+
+  destination:
+    server: https://kubernetes.default.svc
+    # No namespace here — each manifest declares its own namespace
+    # (default for sample-app, monitoring for Prometheus/Alertmanager)
+
+  syncPolicy:
+    automated:
+      prune: true             # delete resources removed from Git
+      selfHeal: true          # revert manual cluster edits
+    syncOptions:
+      - CreateNamespace=true  # create monitoring ns if it doesn't exist yet

@@ -154,6 +154,20 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
         logger.info("Validation did NOT pass — skipping PR creation.")
         pr_result = {"pr_created": False, "reason": "validation_failed"}
 
+    # ----- 5. LOG TO KNOWLEDGE BASE (every run, pass or fail) --------
+    try:
+        from agents.knowledge_base import log_incident
+
+        log_incident(
+            failure_context=failure_context,
+            diagnosis=diagnosis,
+            patch=patch,
+            validation_result=validation_result,
+            pr_result=pr_result,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to log incident: %s", exc)
+
     # ----- ASSEMBLE FINAL RESULT -------------------------------------
     return {
         "diagnosis": diagnosis,
