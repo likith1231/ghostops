@@ -93,6 +93,12 @@ data:
               [__meta_kubernetes_pod_name]
             target_label: pod
 
+      # ---------- GhostOps Backend ----------
+      # Scrapes the FastAPI backend running on the host machine
+      - job_name: "ghostops-backend"
+        static_configs:
+          - targets: ["172.18.0.1:8000"]
+
 ---
 apiVersion: v1
 kind: ConfigMap

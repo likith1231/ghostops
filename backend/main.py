@@ -362,6 +362,48 @@ async def health() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Prometheus Metrics
+# ---------------------------------------------------------------------------
+from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
+import sqlite3
+
+INCIDENTS_TOTAL = Gauge("ghostops_incidents_total", "Total number of incidents")
+INCIDENTS_PASSED = Gauge("ghostops_incidents_passed", "Number of passed incidents")
+INCIDENTS_FAILED = Gauge("ghostops_incidents_failed", "Number of failed incidents")
+PRS_CREATED = Gauge("ghostops_prs_created", "Number of PRs created")
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus metrics endpoint."""
+    from agents.knowledge_base import _DB_PATH
+    if _DB_PATH.exists():
+        try:
+            conn = sqlite3.connect(str(_DB_PATH))
+            row = conn.execute(
+                """\
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN validation_passed = 1 THEN 1 ELSE 0 END) AS passed,
+                    SUM(CASE WHEN validation_passed = 0 THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN pr_created = 1 THEN 1 ELSE 0 END) AS prs_created
+                FROM incidents
+                """
+            ).fetchone()
+            conn.close()
+
+            if row:
+                total, passed, failed, prs_created = row
+                INCIDENTS_TOTAL.set(total or 0)
+                INCIDENTS_PASSED.set(passed or 0)
+                INCIDENTS_FAILED.set(failed or 0)
+                PRS_CREATED.set(prs_created or 0)
+        except Exception as exc:
+            logger.error("Failed to update Prometheus metrics: %s", exc)
+            
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# ---------------------------------------------------------------------------
 # Incident API Router
 # ---------------------------------------------------------------------------
 from backend.routers import incidents
