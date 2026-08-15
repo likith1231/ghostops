@@ -38,6 +38,10 @@ load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Now that the path is set up, import the agent pipeline.
 from agents.crew import run_pipeline  # noqa: E402
+from agents.knowledge_base import init_db  # noqa: E402
+
+# Initialise the SQLite knowledge base (creates DB + table if needed).
+init_db()
 
 # ---------------------------------------------------------------------------
 # Configuration (all overridable via environment variables)
@@ -355,3 +359,11 @@ async def receive_alert(request: Request) -> JSONResponse:
 async def health() -> dict:
     """Simple health-check endpoint."""
     return {"status": "ok", "service": "ghostops-backend"}
+
+
+# ---------------------------------------------------------------------------
+# Incident API Router
+# ---------------------------------------------------------------------------
+from backend.routers import incidents
+
+app.include_router(incidents.router)
