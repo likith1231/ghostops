@@ -21,6 +21,8 @@ only to interpret the test output and produce a structured verdict.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from textwrap import dedent
@@ -157,6 +159,104 @@ def _run_tests_in_sandbox(
 
 
 # ---------------------------------------------------------------------------
+# OPA Gatekeeper Check
+# ---------------------------------------------------------------------------
+def _run_opa_checks(
+    file_path: str,
+    original_content: str,
+    diff_text: str,
+) -> dict | None:
+    """Run OPA conftest on the patched file using Docker.
+    Returns None if passed, or a dict with `exit_code` and `output` on failure.
+    """
+    client = docker.from_env()
+    try:
+        client.images.get("openpolicyagent/conftest:v0.48.0")
+    except ImageNotFound:
+        client.images.pull("openpolicyagent/conftest:v0.48.0")
+
+    with tempfile.TemporaryDirectory() as td:
+        target_name = Path(file_path).name
+        target_path = Path(td) / target_name
+        target_path.write_text(original_content)
+
+        patch_path = Path(td) / "patch.diff"
+        patch_path.write_text(diff_text)
+
+        # Apply patch locally
+        try:
+            subprocess.run(
+                ["patch", "--forward", "--no-backup-if-mismatch", "-p1", "-i", "patch.diff"],
+                cwd=td, check=True, capture_output=True
+            )
+        except subprocess.CalledProcessError as e:
+            return {"exit_code": 1, "output": f"Patch failed in OPA check: {e.stderr.decode()}"}
+
+        # Write file path meta for allowlist.rego
+        meta_path = Path(td) / "meta.json"
+        meta_path.write_text(json.dumps({"file_path": file_path}))
+
+        # Copy policies
+        project_root = Path(__file__).resolve().parent.parent
+        policies_src = project_root / "infra" / "k8s" / "gatekeeper" / "policies"
+        policies_dst = Path(td) / "policies"
+        shutil.copytree(policies_src, policies_dst)
+
+        # Extract rego from Gatekeeper ConstraintTemplates and modify for conftest
+        for yaml_file in policies_dst.glob("*.yaml"):
+            content = yaml_file.read_text()
+            if "kind: ConstraintTemplate" in content and "rego: |" in content:
+                rego_block = content.split("rego: |")[1]
+                lines = rego_block.split("\n")
+                first_line_indent = 0
+                for line in lines:
+                    if line.strip():
+                        first_line_indent = len(line) - len(line.lstrip())
+                        break
+                rego_lines = [line[first_line_indent:] if len(line) >= first_line_indent else line for line in lines]
+                rego_code = "\n".join(rego_lines)
+                rego_code = rego_code.replace("input.review.object.", "input.")
+                (policies_dst / f"{yaml_file.stem}.rego").write_text(rego_code)
+
+        # Run conftest on meta.json (checks allowlist)
+        try:
+            container = client.containers.run(
+                image="openpolicyagent/conftest:v0.48.0",
+                command=["test", "--all-namespaces", "-p", "policies", "meta.json"],
+                volumes={td: {"bind": "/workspace", "mode": "rw"}},
+                working_dir="/workspace",
+                detach=True,
+            )
+            result = container.wait(timeout=30)
+            logs = container.logs().decode("utf-8")
+            container.remove(force=True)
+            if result.get("StatusCode", 0) != 0:
+                return {"exit_code": 1, "output": f"OPA Policy Violation (File Path):\n{logs}"}
+        except Exception as e:
+            return {"exit_code": -1, "output": f"OPA Check Error: {e}"}
+
+        # If patched file is YAML, run conftest on it to evaluate k8s limits/privileged
+        if target_name.endswith(".yaml") or target_name.endswith(".yml"):
+            try:
+                container = client.containers.run(
+                    image="openpolicyagent/conftest:v0.48.0",
+                    command=["test", "--all-namespaces", "-p", "policies", target_name],
+                    volumes={td: {"bind": "/workspace", "mode": "rw"}},
+                    working_dir="/workspace",
+                    detach=True,
+                )
+                result = container.wait(timeout=30)
+                logs = container.logs().decode("utf-8")
+                container.remove(force=True)
+                if result.get("StatusCode", 0) != 0:
+                    return {"exit_code": 1, "output": f"OPA Policy Violation (K8s Manifest):\n{logs}"}
+            except Exception as e:
+                return {"exit_code": -1, "output": f"OPA Check Error: {e}"}
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # CrewAI agent & task builders
 # ---------------------------------------------------------------------------
 def build_validation_agent() -> Agent:
@@ -211,7 +311,13 @@ def build_validation_task(
     Task
         A CrewAI Task whose output is the JSON validation verdict.
     """
-    sandbox_result = _run_tests_in_sandbox(file_path, original_content, diff_text)
+    # 1. First, check the patch against OPA policies
+    opa_result = _run_opa_checks(file_path, original_content, diff_text)
+    if opa_result is not None:
+        sandbox_result = opa_result
+    else:
+        # 2. If it passes OPA, run the actual tests in the sandbox
+        sandbox_result = _run_tests_in_sandbox(file_path, original_content, diff_text)
 
     return Task(
         description=dedent(f"""\

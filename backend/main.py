@@ -23,7 +23,7 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 # ---------------------------------------------------------------------------
@@ -65,6 +65,39 @@ logging.basicConfig(
 logger = logging.getLogger("ghostops.backend")
 
 # ---------------------------------------------------------------------------
+# OpenTelemetry Tracing
+# ---------------------------------------------------------------------------
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource, SERVICE_NAME
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+OTEL_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317")
+# gRPC exporter expects host:port, not a URL with a scheme. Strip http(s):// if present.
+if "://" in OTEL_ENDPOINT:
+    OTEL_ENDPOINT = OTEL_ENDPOINT.split("://")[-1]
+
+resource = Resource.create({SERVICE_NAME: "ghostops-backend"})
+provider = TracerProvider(resource=resource)
+try:
+    # Set a short flush interval (1s) for local debugging so spans appear quickly
+    processor = BatchSpanProcessor(
+        OTLPSpanExporter(endpoint=OTEL_ENDPOINT, insecure=True),
+        schedule_delay_millis=1000,
+    )
+    provider.add_span_processor(processor)
+    logger.info("OpenTelemetry exporter configured with gRPC endpoint: %s", OTEL_ENDPOINT)
+    
+    # Temporarily enable OpenTelemetry debug logging to reveal silent gRPC failures
+    logging.getLogger("opentelemetry.exporter.otlp.proto.grpc").setLevel(logging.DEBUG)
+except Exception as e:
+    logger.warning("Failed to initialize OTLP exporter, tracing will be disabled. Error: %s", e)
+
+trace.set_tracer_provider(provider)
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 app = FastAPI(
@@ -72,6 +105,8 @@ app = FastAPI(
     description="Receives Alertmanager webhooks and feeds the AI agent pipeline.",
     version="0.1.0",
 )
+
+FastAPIInstrumentor.instrument_app(app)
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +364,21 @@ async def receive_alert(request: Request) -> JSONResponse:
 
         except Exception as exc:  # noqa: BLE001
             logger.error("Pipeline failed for pod=%s: %s", pod_name, exc, exc_info=True)
-            pipeline_result = {"error": str(exc)}
+            err_str = str(exc)
+            
+            # Detect Litellm / Gemini quota limits
+            if "RateLimitError" in str(type(exc)) or "429" in err_str or "Quota" in err_str:
+                clean_error = "API Quota Exhausted / Rate Limited"
+            else:
+                clean_error = f"Pipeline Execution Failed: {err_str}"
+                
+            pipeline_result = {
+                "error": clean_error,
+                "diagnosis": {"root_cause": "Pipeline failed: " + clean_error},
+                "patch": {"diff": "", "explanation": "No patch generated due to failure"},
+                "validation_result": {"passed": False, "reason": "Pipeline did not complete"},
+                "pr_result": {"pr_created": False, "reason": "pipeline_failed"},
+            }
 
         # ---- Step F: Build response ------------------------------------
         results.append({

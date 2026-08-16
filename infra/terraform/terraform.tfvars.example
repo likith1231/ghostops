@@ -1,0 +1,8 @@
+# GhostOps Terraform — Example Variable Values
+# Copy this file to terraform.tfvars and adjust as needed.
+
+# kubeconfig_path       = "~/.kube/config"
+# kubeconfig_context    = "kind-ghostops"
+# sample_app_image      = "ghostops-sample-app:v2"
+# github_repo_url       = "https://github.com/likith1231/ghostops.git"
+# docker_bridge_gateway = "172.18.0.1"

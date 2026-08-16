@@ -28,8 +28,10 @@ from crewai import Crew, Process
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
 from agents.validation_officer import build_validation_agent, build_validation_task
+from opentelemetry import trace
 
 logger = logging.getLogger("ghostops.crew")
+tracer = trace.get_tracer(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -74,19 +76,22 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
     """
     # ----- 1. DIAGNOSTIC REASONER ------------------------------------
     logger.info("Stage 1/3 — Running Diagnostic Reasoner …")
-    reasoner_agent = build_reasoner_agent()
-    reasoner_task = build_reasoner_task(reasoner_agent, failure_context)
+    
+    with tracer.start_as_current_span("diagnostic_reasoner") as span:
+        span.set_attribute("alert_type", failure_context.get("alert_type", "unknown"))
+        reasoner_agent = build_reasoner_agent()
+        reasoner_task = build_reasoner_task(reasoner_agent, failure_context)
 
-    reasoner_crew = Crew(
-        agents=[reasoner_agent],
-        tasks=[reasoner_task],
-        process=Process.sequential,
-        verbose=True,
-    )
-    reasoner_result = reasoner_crew.kickoff()
-    diagnosis_text = str(reasoner_result)
-    diagnosis = _safe_json_loads(diagnosis_text)
-    logger.info("Diagnosis: %s", diagnosis.get("root_cause", "unknown"))
+        reasoner_crew = Crew(
+            agents=[reasoner_agent],
+            tasks=[reasoner_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        reasoner_result = reasoner_crew.kickoff()
+        diagnosis_text = str(reasoner_result)
+        diagnosis = _safe_json_loads(diagnosis_text)
+        logger.info("Diagnosis: %s", diagnosis.get("root_cause", "unknown"))
 
     # ----- 2. PATCH GENERATOR ----------------------------------------
     logger.info("Stage 2/3 — Running Patch Generator …")
@@ -94,19 +99,20 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
     if not source_files:
         logger.warning("No source_files in failure_context — patch stage may fail.")
 
-    patch_agent = build_patch_agent()
-    patch_task = build_patch_task(patch_agent, diagnosis_text, source_files)
+    with tracer.start_as_current_span("patch_generator"):
+        patch_agent = build_patch_agent()
+        patch_task = build_patch_task(patch_agent, diagnosis_text, source_files)
 
-    patch_crew = Crew(
-        agents=[patch_agent],
-        tasks=[patch_task],
-        process=Process.sequential,
-        verbose=True,
-    )
-    patch_result = patch_crew.kickoff()
-    patch_text = str(patch_result)
-    patch = _safe_json_loads(patch_text)
-    logger.info("Patch generated — diff length: %d chars", len(patch.get("diff", "")))
+        patch_crew = Crew(
+            agents=[patch_agent],
+            tasks=[patch_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        patch_result = patch_crew.kickoff()
+        patch_text = str(patch_result)
+        patch = _safe_json_loads(patch_text)
+        logger.info("Patch generated — diff length: %d chars", len(patch.get("diff", "")))
 
     # ----- 3. VALIDATION OFFICER -------------------------------------
     logger.info("Stage 3/3 — Running Validation Officer …")
@@ -115,20 +121,22 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
     original_content = source_files.get(file_path, "")
     diff_text = patch.get("diff", "")
 
-    validation_agent = build_validation_agent()
-    validation_task = build_validation_task(
-        validation_agent, file_path, original_content, diff_text
-    )
+    with tracer.start_as_current_span("validation_officer") as span:
+        validation_agent = build_validation_agent()
+        validation_task = build_validation_task(
+            validation_agent, file_path, original_content, diff_text
+        )
 
-    validation_crew = Crew(
-        agents=[validation_agent],
-        tasks=[validation_task],
-        process=Process.sequential,
-        verbose=True,
-    )
-    validation_result_raw = validation_crew.kickoff()
-    validation_result = _safe_json_loads(str(validation_result_raw))
-    logger.info("Validation passed: %s", validation_result.get("passed"))
+        validation_crew = Crew(
+            agents=[validation_agent],
+            tasks=[validation_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        validation_result_raw = validation_crew.kickoff()
+        validation_result = _safe_json_loads(str(validation_result_raw))
+        span.set_attribute("validation_passed", validation_result.get("passed", False))
+        logger.info("Validation passed: %s", validation_result.get("passed"))
 
     # ----- 4. DEPLOYMENT ACTION (auto-PR on validated pass) -----------
     pr_result: dict[str, Any] = {"pr_created": False, "reason": "skipped"}

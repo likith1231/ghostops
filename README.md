@@ -279,15 +279,16 @@ for i in $(seq 1 10); do curl -s http://localhost:5000/leak; done
 | **7** | SQLite Knowledge Base | Done: Every pipeline run logged with full context |
 | **8** | Grafana Dashboard | Done: 7-panel incident dashboard with JSON API datasource |
 | **9** | Prometheus /metrics | Done: Sample app exposes custom gauges via prometheus_client |
+| **10** | OPA Gatekeeper Policy Enforcement | Done: Evaluates AI patches against constraints via conftest |
+| **13** | Infrastructure as Code | Done: Terraform modules replicating infra/k8s/ manifests |
 
 ### In Progress / Planned
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| **10** | Past incident context injection | Planned: Wire get_past_incidents() into failure_context |
-| **11** | Slack/Discord notifications | Planned: Alert on pipeline completion |
+| **11** | Past incident context injection | Planned: Wire get_past_incidents() into failure_context |
 | **12** | Multi-service support | Planned: Extend beyond single sample-app |
-| **13** | Demo video / architecture diagram | Planned: Record end-to-end walkthrough |
+| **14** | Demo video / architecture diagram | Planned: Record end-to-end walkthrough |
 
 ---
 
@@ -296,12 +297,13 @@ for i in $(seq 1 10); do curl -s http://localhost:5000/leak; done
 ```bash
 cd ~/ghostops
 
-# All tests (14 total: 5 deployer safety gates + 9 knowledge base)
+# All tests
 python -m pytest agents/tests/ -v
 
 # Individual test files
 python -m pytest agents/tests/test_deployer.py -v
 python -m pytest agents/tests/test_knowledge_base.py -v
+python -m pytest agents/tests/test_policy_enforcement.py -v
 ```
 
 ---

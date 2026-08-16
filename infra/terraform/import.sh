@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+# Monitoring module
+terraform import module.monitoring.kubernetes_namespace_v1.monitoring monitoring
+terraform import module.monitoring.kubernetes_cluster_role_v1.prometheus prometheus
+terraform import module.monitoring.kubernetes_cluster_role_binding_v1.prometheus prometheus
+terraform import module.monitoring.kubernetes_service_account_v1.prometheus monitoring/prometheus
+terraform import module.monitoring.kubernetes_config_map_v1.prometheus_config monitoring/prometheus-config
+terraform import module.monitoring.kubernetes_config_map_v1.prometheus_rules monitoring/prometheus-rules
+terraform import module.monitoring.kubernetes_deployment_v1.prometheus monitoring/prometheus
+terraform import module.monitoring.kubernetes_service_v1.prometheus monitoring/prometheus
+terraform import module.monitoring.kubernetes_config_map_v1.alertmanager_config monitoring/alertmanager-config
+terraform import module.monitoring.kubernetes_deployment_v1.alertmanager monitoring/alertmanager
+terraform import module.monitoring.kubernetes_service_v1.alertmanager monitoring/alertmanager
+terraform import module.monitoring.kubernetes_config_map_v1.grafana_datasources monitoring/grafana-datasources
+terraform import module.monitoring.kubernetes_config_map_v1.grafana_dashboard_provider monitoring/grafana-dashboard-provider
+terraform import module.monitoring.kubernetes_config_map_v1.grafana_dashboards monitoring/grafana-dashboards
+terraform import module.monitoring.kubernetes_deployment_v1.grafana monitoring/grafana
+terraform import module.monitoring.kubernetes_service_v1.grafana monitoring/grafana
+
+# Sample App module
+terraform import module.sample_app.kubernetes_deployment_v1.sample_app default/sample-app
+terraform import module.sample_app.kubernetes_service_v1.sample_app default/sample-app
+
+echo "All imports completed successfully."
