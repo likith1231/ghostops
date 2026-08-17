@@ -23,7 +23,7 @@ from textwrap import dedent
 
 from crewai import Agent, LLM, Task
 
-from agents.config import GOOGLE_API_KEY, PRIMARY_MODEL
+from agents.config import ANTHROPIC_API_KEY, CLAUDE_MODEL, GOOGLE_API_KEY, PRIMARY_MODEL
 
 # ---------------------------------------------------------------------------
 # System prompt
@@ -59,8 +59,8 @@ PATCHGEN_SYSTEM_PROMPT: str = dedent("""\
 def build_patch_agent() -> Agent:
     """Instantiate the Patch Generator CrewAI Agent."""
     llm = LLM(
-        model=PRIMARY_MODEL,
-        api_key=GOOGLE_API_KEY,
+        model=CLAUDE_MODEL,
+        api_key=ANTHROPIC_API_KEY,
         temperature=0.0,
     )
 

@@ -13,3 +13,7 @@ allowed_path(path) {
 allowed_path(path) {
     path == "infra/k8s/sample-app.yaml"
 }
+
+allowed_path(path) {
+    path == "math_utils.py"
+}
