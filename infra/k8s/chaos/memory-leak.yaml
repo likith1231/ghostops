@@ -13,4 +13,4 @@ spec:
   stressors:
     memory:
       workers: 1
-      size: "150MB"
+      size: "100MB"

@@ -97,6 +97,7 @@ if not GITHUB_TOKEN:
 # Model constants
 # Swap these values to change models across the entire pipeline.
 # ---------------------------------------------------------------------------
+CLAUDE_MODEL: str = "anthropic/claude-sonnet-4-6"
 PRIMARY_MODEL: str = "gemini/gemini-3-flash-preview"         # Google Gemini (free tier) — gemini/ prefix required by litellm
 FALLBACK_MODEL: str = "gemini-1.5-pro"              # Google Gemini 1.5 Pro
 
