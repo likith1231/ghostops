@@ -5,9 +5,6 @@ GhostOps Agent Configuration
 Loads API keys from the project-root .env file and exposes model-name
 constants so they can be changed in exactly one place.
 
-Currently running on Gemini (free tier) — swap PRIMARY_MODEL and the LLM
-client in diagnostic_reasoner.py / patch_generator.py /
-validation_officer.py back to Claude once Anthropic billing is set up.
 """
 
 import json

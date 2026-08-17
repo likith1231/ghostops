@@ -13,7 +13,6 @@ Supported root causes
 - **ci_test_failure** (C4) — fix the regression in the application code (NOT
   the test) unless the test itself is genuinely wrong.
 
-LLM: Gemini (Google, free tier) via CrewAI's native ``LLM`` class.
 """
 
 from __future__ import annotations

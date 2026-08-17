@@ -10,7 +10,6 @@ into one of:
 It also produces a short structured diagnosis that cites the specific log
 lines and metric values that led to the conclusion.
 
-LLM: Gemini (Google) via CrewAI's native ``LLM`` class (litellm backend).
 """
 
 from __future__ import annotations

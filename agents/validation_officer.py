@@ -14,8 +14,6 @@ Safety guarantees
 * The container has no network access (``network_mode="none"``) and runs
   with reduced capabilities.
 
-LLM: Gemini (Google, free tier) via CrewAI's native ``LLM`` class — used
-only to interpret the test output and produce a structured verdict.
 """
 
 from __future__ import annotations
