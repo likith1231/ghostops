@@ -68,9 +68,16 @@ def _format_evidence(evidence: Any, style: str = "markdown") -> str:
         parts: list[str] = []
         for ev in evidence:
             if isinstance(ev, dict):
-                ref = ev.get("reference", "")
-                reasoning = ev.get("reasoning", "")
-                ev_type = ev.get("type", "?")
+                # Try exact keys first, fall back to capitalized or alternate keys
+                ev_type = ev.get("type", ev.get("Type", ev.get("source", "?")))
+                ref = ev.get("reference", ev.get("Reference", ev.get("detail", "")))
+                reasoning = ev.get("reasoning", ev.get("Reasoning", ""))
+                # If nested in "evidence"
+                if ev_type == "?" and not ref and "evidence" in ev and isinstance(ev["evidence"], dict):
+                    nested = ev["evidence"]
+                    ev_type = nested.get("type", "?")
+                    ref = nested.get("reference", "")
+                    reasoning = nested.get("reasoning", "")
                 if style == "markdown":
                     parts.append(f"  - **{ev_type}**: `{ref}` — {reasoning}")
                 else:
