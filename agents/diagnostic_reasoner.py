@@ -19,7 +19,7 @@ from textwrap import dedent
 
 from crewai import Agent, LLM, Task
 
-from agents.config import GOOGLE_API_KEY, PRIMARY_MODEL
+from agents.config import LLM_API_KEY, LLM_OPTIONS, PRIMARY_MODEL
 
 # ---------------------------------------------------------------------------
 # System prompt — intentionally narrow to avoid hallucinated speculation.
@@ -55,8 +55,8 @@ def build_reasoner_agent() -> Agent:
     """Instantiate the Diagnostic Reasoner CrewAI Agent."""
     llm = LLM(
         model=PRIMARY_MODEL,
-        api_key=GOOGLE_API_KEY,
-        temperature=0.0,
+        api_key=LLM_API_KEY,
+        **LLM_OPTIONS,
     )
 
     return Agent(

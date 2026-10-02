@@ -66,18 +66,10 @@ os.environ["CREWAI_DISABLE_TELEMETRY"] = get_secret("CREWAI_DISABLE_TELEMETRY", 
 ANTHROPIC_API_KEY: str = get_secret("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY: str = get_secret("GOOGLE_API_KEY", "")
 
-if not GOOGLE_API_KEY:
+if not (ANTHROPIC_API_KEY or GOOGLE_API_KEY):
     raise EnvironmentError(
-        "GOOGLE_API_KEY is not set. "
+        "ANTHROPIC_API_KEY is not set. "
         f"Make sure it exists in {_env_path} or is exported in your shell."
-    )
-
-# Anthropic key is optional for now — warn instead of crashing.
-if not ANTHROPIC_API_KEY:
-    import warnings
-    warnings.warn(
-        "ANTHROPIC_API_KEY is not set — Claude models will be unavailable.",
-        stacklevel=2,
     )
 
 GITHUB_TOKEN: str = get_secret("GITHUB_TOKEN", "")
@@ -94,8 +86,18 @@ if not GITHUB_TOKEN:
 # Model constants
 # Swap these values to change models across the entire pipeline.
 # ---------------------------------------------------------------------------
-PRIMARY_MODEL: str = "gemini/gemini-3-flash-preview"         # Google Gemini (free tier) — gemini/ prefix required by litellm
-FALLBACK_MODEL: str = "gemini-1.5-pro"              # Google Gemini 1.5 Pro
+# Claude is used whenever ANTHROPIC_API_KEY is set; Gemini is the fallback.
+CLAUDE_MODEL: str = get_secret("CLAUDE_MODEL", "claude-opus-5-5")
+
+if ANTHROPIC_API_KEY:
+    PRIMARY_MODEL: str = f"anthropic/{CLAUDE_MODEL}"         # anthropic/ prefix required by litellm
+    LLM_API_KEY: str = ANTHROPIC_API_KEY
+    # Current Claude models reject non-default sampling parameters (temperature, top_p).
+    LLM_OPTIONS: dict = {}
+else:
+    PRIMARY_MODEL = "gemini/gemini-3-flash-preview"          # gemini/ prefix required by litellm
+    LLM_API_KEY = GOOGLE_API_KEY
+    LLM_OPTIONS = {"temperature": 0.0}
 
 # ---------------------------------------------------------------------------
 # Docker / sandbox settings

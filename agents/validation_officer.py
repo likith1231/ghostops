@@ -30,7 +30,8 @@ from crewai import Agent, LLM, Task
 from docker.errors import ContainerError, ImageNotFound
 
 from agents.config import (
-    GOOGLE_API_KEY,
+    LLM_API_KEY,
+    LLM_OPTIONS,
     PRIMARY_MODEL,
     SANDBOX_IMAGE,
     SANDBOX_TIMEOUT_SECONDS,
@@ -261,8 +262,8 @@ def build_validation_agent() -> Agent:
     """Instantiate the Validation Officer CrewAI Agent."""
     llm = LLM(
         model=PRIMARY_MODEL,
-        api_key=GOOGLE_API_KEY,
-        temperature=0.0,
+        api_key=LLM_API_KEY,
+        **LLM_OPTIONS,
     )
 
     return Agent(
