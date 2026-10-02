@@ -2,3 +2,4 @@ infra/kind/charts/
 .env
 __pycache__/
 agents/data/
+.venv/
