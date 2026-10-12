@@ -94,7 +94,6 @@ for f in infra/k8s/monitoring/*.yaml; do
   sed "s/172\.18\.0\.1/$NODE_IP/g" "$f" | kubectl apply -f -
 done
 kubectl apply -f infra/k8s/sample-app.yaml
-kubectl apply -f deploy/oracle/edge-services.yaml
 
 # Grafana ships with anonymous *admin* access for local dev; make the public instance read-only.
 GRAFANA_PASSWORD=$(sudo cat /var/lib/ghostops-grafana-password 2>/dev/null || true)

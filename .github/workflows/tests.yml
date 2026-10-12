@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    env:
+      # agents/config.py refuses to import without a key; the tests never call the API.
+      ANTHROPIC_API_KEY: ci-placeholder
+      CREWAI_DISABLE_TELEMETRY: "true"
+      OTEL_SDK_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            agents/requirements.txt
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt -r agents/requirements.txt
+      # The OPA tests run conftest in Docker, which the Ubuntu runner provides.
+      - name: Run tests
+        run: python -m pytest -v

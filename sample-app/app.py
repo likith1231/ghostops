@@ -37,10 +37,15 @@ def health():
 
 @app.route("/leak")
 def leak():
-    return jsonify(status="ok")
+    # Intentional bug for the GhostOps demo: every call keeps 10 MiB forever.
     leak_store.append("0" * 10 * 1024 * 1024)
+    return jsonify(status="ok")
+
+
 @app.route("/")
 def index():
     return jsonify(service="ghostops-sample-app", version="1.1")
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

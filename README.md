@@ -83,6 +83,22 @@ To run GhostOps locally, you'll need Docker, `kind`, `kubectl`, `helm`, and `pyt
 
 ---
 
+## 🎬 Presentation Demo
+
+`scripts/demo.sh` drives the whole demo:
+
+```bash
+./scripts/demo.sh check      # pre-flight: cluster, keys, clean git tree
+./scripts/demo.sh up         # dashboards: Grafana :3000, Prometheus :9090, Jaeger :16686, Chaos Mesh :2333
+./scripts/demo.sh backend    # GhostOps backend (own terminal, keep it open)
+./scripts/demo.sh tests      # each test group separately, with a PASS banner
+./scripts/demo.sh leak       # scenario 1 live: leak -> alert -> AI fix -> PR  (--direct: no cluster)
+./scripts/demo.sh ci         # scenario 2: CI test failure -> AI fix -> PR
+./scripts/demo.sh reset      # restart the sample app between runs
+```
+
+---
+
 ## 🎯 Triggering a Demo Incident
 
 GhostOps is designed to respond to real failures. You can trigger incidents in two ways:

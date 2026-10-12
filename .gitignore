@@ -3,3 +3,5 @@ infra/kind/charts/
 __pycache__/
 agents/data/
 .venv/
+venv/
+.pytest_cache/

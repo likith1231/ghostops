@@ -25,6 +25,7 @@ import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 # ---------------------------------------------------------------------------
 # Path setup — ensure the project root is on sys.path so we can import the
@@ -342,7 +343,9 @@ async def receive_alert(request: Request) -> JSONResponse:
 
         # ---- Step D: Run the agent pipeline ----------------------------
         try:
-            pipeline_result = run_pipeline(failure_context)
+            # Run in a worker thread so /health, /metrics and the Grafana API stay
+            # responsive during the few minutes the agents take.
+            pipeline_result = await run_in_threadpool(run_pipeline, failure_context)
 
             # ---- Step E: Log the result clearly ------------------------
             logger.info("=" * 72)
