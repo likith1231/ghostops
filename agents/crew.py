@@ -186,6 +186,98 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Sample failure contexts (used by the CLI and scripts/run_scenario.py)
+# ---------------------------------------------------------------------------
+# ---------- Sample B1 failure context (memory leak) ----------
+SAMPLE_B1: dict[str, Any] = {
+    "alert_type": "memory_high",
+    "logs": [
+        "2026-08-07T08:00:12Z app WARNING: /api/data handler allocated 2.3 GB",
+        "2026-08-07T08:01:45Z kernel: Out of memory: Killed process 4321 (gunicorn)",
+        "2026-08-07T08:01:45Z app ERROR: Worker process terminated (OOM)",
+        "2026-08-07T07:55:00Z app INFO: request_cache size: 148201 entries",
+        "2026-08-07T07:50:00Z app INFO: request_cache size: 102300 entries",
+    ],
+    "metrics": {
+        "container_memory_usage_bytes": [
+            {"ts": "08:00", "value": 1_900_000_000},
+            {"ts": "07:55", "value": 1_600_000_000},
+            {"ts": "07:50", "value": 1_200_000_000},
+            {"ts": "07:45", "value": 800_000_000},
+        ],
+        "container_memory_limit_bytes": 2_000_000_000,
+    },
+    "source_files": {
+        "app.py": (
+            "from flask import Flask, jsonify\n"
+            "\n"
+            "app = Flask(__name__)\n"
+            "\n"
+            "# In-memory cache with no eviction policy\n"
+            "request_cache = []\n"
+            "\n"
+            "\n"
+            "@app.route('/api/data')\n"
+            "def get_data():\n"
+            "    result = expensive_computation()\n"
+            "    request_cache.append(result)  # never cleared\n"
+            "    return jsonify(result)\n"
+            "\n"
+            "\n"
+            "def expensive_computation():\n"
+            "    return {'value': list(range(10000))}\n"
+            "\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    app.run(debug=True)\n"
+        ),
+    },
+    "past_incidents": [
+        {
+            "id": "INC-0042",
+            "summary": "OOM kill on /api/data endpoint due to unbounded cache",
+            "resolution": "Added max-size limit to request_cache",
+        }
+    ],
+}
+
+# ---------- Sample C4 failure context (CI test failure) ----------
+SAMPLE_C4: dict[str, Any] = {
+    "alert_type": "ci_failure",
+    "logs": [
+        "Run pytest tests/ -v",
+        "tests/test_math_utils.py::test_add PASSED",
+        "tests/test_math_utils.py::test_multiply FAILED",
+        "FAILED tests/test_math_utils.py::test_multiply - AssertionError: assert 6 == 8",
+        "=== 1 failed, 1 passed in 0.04s ===",
+    ],
+    "metrics": {},
+    "source_files": {
+        "math_utils.py": (
+            "def add(a, b):\n"
+            "    return a + b\n"
+            "\n"
+            "\n"
+            "def multiply(a, b):\n"
+            "    return a + b  # BUG: should be a * b\n"
+        ),
+        "tests/test_math_utils.py": (
+            "from math_utils import add, multiply\n"
+            "\n"
+            "\n"
+            "def test_add():\n"
+            "    assert add(2, 3) == 5\n"
+            "\n"
+            "\n"
+            "def test_multiply():\n"
+            "    assert multiply(2, 4) == 8\n"
+        ),
+    },
+    "past_incidents": [],
+}
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point (for quick manual testing)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -193,100 +285,12 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    # ---------- Sample B1 failure context (memory leak) ----------
-    sample_b1: dict[str, Any] = {
-        "alert_type": "memory_high",
-        "logs": [
-            "2026-08-07T08:00:12Z app WARNING: /api/data handler allocated 2.3 GB",
-            "2026-08-07T08:01:45Z kernel: Out of memory: Killed process 4321 (gunicorn)",
-            "2026-08-07T08:01:45Z app ERROR: Worker process terminated (OOM)",
-            "2026-08-07T07:55:00Z app INFO: request_cache size: 148201 entries",
-            "2026-08-07T07:50:00Z app INFO: request_cache size: 102300 entries",
-        ],
-        "metrics": {
-            "container_memory_usage_bytes": [
-                {"ts": "08:00", "value": 1_900_000_000},
-                {"ts": "07:55", "value": 1_600_000_000},
-                {"ts": "07:50", "value": 1_200_000_000},
-                {"ts": "07:45", "value": 800_000_000},
-            ],
-            "container_memory_limit_bytes": 2_000_000_000,
-        },
-        "source_files": {
-            "app.py": (
-                "from flask import Flask, jsonify\n"
-                "\n"
-                "app = Flask(__name__)\n"
-                "\n"
-                "# In-memory cache with no eviction policy\n"
-                "request_cache = []\n"
-                "\n"
-                "\n"
-                "@app.route('/api/data')\n"
-                "def get_data():\n"
-                "    result = expensive_computation()\n"
-                "    request_cache.append(result)  # never cleared\n"
-                "    return jsonify(result)\n"
-                "\n"
-                "\n"
-                "def expensive_computation():\n"
-                "    return {'value': list(range(10000))}\n"
-                "\n"
-                "\n"
-                "if __name__ == '__main__':\n"
-                "    app.run(debug=True)\n"
-            ),
-        },
-        "past_incidents": [
-            {
-                "id": "INC-0042",
-                "summary": "OOM kill on /api/data endpoint due to unbounded cache",
-                "resolution": "Added max-size limit to request_cache",
-            }
-        ],
-    }
-
-    # ---------- Sample C4 failure context (CI test failure) ----------
-    sample_c4: dict[str, Any] = {
-        "alert_type": "ci_failure",
-        "logs": [
-            "Run pytest tests/ -v",
-            "tests/test_math_utils.py::test_add PASSED",
-            "tests/test_math_utils.py::test_multiply FAILED",
-            "FAILED tests/test_math_utils.py::test_multiply - AssertionError: assert 6 == 8",
-            "=== 1 failed, 1 passed in 0.04s ===",
-        ],
-        "metrics": {},
-        "source_files": {
-            "math_utils.py": (
-                "def add(a, b):\n"
-                "    return a + b\n"
-                "\n"
-                "\n"
-                "def multiply(a, b):\n"
-                "    return a + b  # BUG: should be a * b\n"
-            ),
-            "tests/test_math_utils.py": (
-                "from math_utils import add, multiply\n"
-                "\n"
-                "\n"
-                "def test_add():\n"
-                "    assert add(2, 3) == 5\n"
-                "\n"
-                "\n"
-                "def test_multiply():\n"
-                "    assert multiply(2, 4) == 8\n"
-            ),
-        },
-        "past_incidents": [],
-    }
-
     # Pick which sample to run based on CLI arg.
     if len(sys.argv) > 1 and sys.argv[1] == "c4":
-        context = sample_c4
+        context = SAMPLE_C4
         print("Running pipeline with C4 (CI failure) sample context …")
     else:
-        context = sample_b1
+        context = SAMPLE_B1
         print("Running pipeline with B1 (memory leak) sample context …")
 
     result = run_pipeline(context)
