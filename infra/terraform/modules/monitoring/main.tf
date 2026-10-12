@@ -179,8 +179,8 @@ resource "kubernetes_config_map_v1" "prometheus_rules" {
           rules:
             - alert: SampleAppHighMemory
               expr: |
-                container_memory_working_set_bytes{pod=~"sample-app.*"}
-                / container_spec_memory_limit_bytes{pod=~"sample-app.*"} > 0.8
+                container_memory_working_set_bytes{pod=~"sample-app.*", container="sample-app"}
+                / container_spec_memory_limit_bytes{pod=~"sample-app.*", container="sample-app"} > 0.8
               for: 30s
               labels:
                 severity: critical

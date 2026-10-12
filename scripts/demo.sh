@@ -44,7 +44,7 @@ prom_value() {  # first value of an instant PromQL query, or empty
 }
 memory_percent() {
   local v
-  v=$(prom_value 'max(container_memory_working_set_bytes{pod=~"sample-app.*"} / container_spec_memory_limit_bytes{pod=~"sample-app.*"})')
+  v=$(prom_value 'max(container_memory_working_set_bytes{pod=~"sample-app.*", container="sample-app"} / container_spec_memory_limit_bytes{pod=~"sample-app.*", container="sample-app"})')
   [ -n "$v" ] && "$PY" -c "print(round($v * 100))" || echo "?"
 }
 alert_state() {  # inactive | pending | firing

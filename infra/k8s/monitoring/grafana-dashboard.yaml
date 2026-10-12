@@ -267,12 +267,12 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "container_memory_working_set_bytes{pod=~\"sample-app.*\"}",
+              "expr": "container_memory_working_set_bytes{pod=~\"sample-app.*\", container=\"sample-app\"}",
               "legendFormat": "{{pod}} working set"
             },
             {
               "refId": "B",
-              "expr": "container_spec_memory_limit_bytes{pod=~\"sample-app.*\"}",
+              "expr": "container_spec_memory_limit_bytes{pod=~\"sample-app.*\", container=\"sample-app\"}",
               "legendFormat": "{{pod}} limit"
             }
           ],
