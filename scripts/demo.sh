@@ -130,6 +130,10 @@ cmd_down() {
 
 # ------------------------------------------------------------------ backend
 cmd_backend() {
+  # Traces go to Jaeger and secrets come from Vault, both through port-forwards.
+  forward jaeger-otlp 4317 monitoring svc/jaeger 4317
+  forward vault 8200 default svc/vault 8200
+  sleep 2
   banner "GhostOps backend: listening for Alertmanager webhooks on :8000"
   # No --reload: the deployer switches git branches while it opens a PR, which would restart the server.
   exec "$PY" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
@@ -209,25 +213,7 @@ cmd_leak() {
   echo
   [ "$total" -gt "$before" ] || die "No new incident after 10 minutes. Check the backend terminal for errors."
 
-  local elapsed=$(($(date +%s) - started))
-  curl -fsS -m 5 "$BACKEND/api/incidents/recent?limit=1" | "$PY" -c '
-import json, sys
-inc = json.load(sys.stdin)[0]
-G, R, B, N = sys.argv[2:6]
-print("=" * 72)
-print(f"{B}Scenario 1: Memory leak (live){N}")
-print("=" * 72)
-print(f"  Root cause  : {inc.get(\"root_cause\") or \"-\"}")
-print(f"  Confidence  : {inc.get(\"confidence\") or \"-\"}")
-print(f"  Pull request: {inc.get(\"pr_url\") or \"not created\"}")
-print(f"  Time taken  : {sys.argv[1]} s from first leak to fix")
-print()
-if inc.get("validation_passed"):
-    print(f"{G}  ✅ PASSED: the AI fix was validated in the sandbox{N}")
-else:
-    print(f"{R}  ❌ FAILED: the patch did not pass validation{N}")
-print("=" * 72)
-sys.exit(0 if inc.get("validation_passed") else 1)' "$elapsed" "$G" "$R" "$B" "$N"
+  "$PY" -m scripts.run_scenario latest "Scenario 1: Memory leak (live)" $(($(date +%s) - started))
 }
 
 cmd_ci() {

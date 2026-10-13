@@ -11,11 +11,11 @@
       "title": "Total Incidents",
       "type": "stat",
       "gridPos": { "h": 6, "w": 4, "x": 0, "y": 0 },
-      "datasource": { "type": "marcusolsson-json-datasource", "uid": "" },
+      "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "marcusolsson-json-datasource" },
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
           "fields": [{ "jsonPath": "$.total", "name": "Total" }],
           "method": "GET",
           "urlPath": "/api/incidents/summary"
@@ -48,11 +48,11 @@
       "title": "Validation Pass Rate",
       "type": "gauge",
       "gridPos": { "h": 6, "w": 4, "x": 4, "y": 0 },
-      "datasource": { "type": "marcusolsson-json-datasource", "uid": "" },
+      "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "marcusolsson-json-datasource" },
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
           "fields": [{ "jsonPath": "$.pass_rate", "name": "Pass Rate" }],
           "method": "GET",
           "urlPath": "/api/incidents/summary"
@@ -86,11 +86,11 @@
       "title": "Passed",
       "type": "stat",
       "gridPos": { "h": 6, "w": 4, "x": 8, "y": 0 },
-      "datasource": { "type": "marcusolsson-json-datasource", "uid": "" },
+      "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "marcusolsson-json-datasource" },
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
           "fields": [{ "jsonPath": "$.passed", "name": "Passed" }],
           "method": "GET",
           "urlPath": "/api/incidents/summary"
@@ -120,11 +120,11 @@
       "title": "Failed",
       "type": "stat",
       "gridPos": { "h": 6, "w": 4, "x": 12, "y": 0 },
-      "datasource": { "type": "marcusolsson-json-datasource", "uid": "" },
+      "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "marcusolsson-json-datasource" },
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
           "fields": [{ "jsonPath": "$.failed", "name": "Failed" }],
           "method": "GET",
           "urlPath": "/api/incidents/summary"
@@ -157,11 +157,11 @@
       "title": "PRs Created",
       "type": "stat",
       "gridPos": { "h": 6, "w": 4, "x": 16, "y": 0 },
-      "datasource": { "type": "marcusolsson-json-datasource", "uid": "" },
+      "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "marcusolsson-json-datasource" },
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
           "fields": [{ "jsonPath": "$.prs_created", "name": "PRs" }],
           "method": "GET",
           "urlPath": "/api/incidents/summary"
@@ -191,11 +191,11 @@
       "title": "Recent Incidents",
       "type": "table",
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 6 },
-      "datasource": { "type": "marcusolsson-json-datasource", "uid": "" },
+      "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "marcusolsson-json-datasource" },
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "ghostops-api" },
           "fields": [
             { "jsonPath": "$[*].timestamp", "name": "Timestamp" },
             { "jsonPath": "$[*].alert_type", "name": "Alert Type" },
@@ -253,7 +253,7 @@
       "title": "Sample App Memory (from Prometheus)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
-      "datasource": { "type": "prometheus", "uid": "" },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "refId": "A",

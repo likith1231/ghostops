@@ -18,9 +18,11 @@ Safety guarantees
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from pathlib import Path
 from textwrap import dedent
@@ -33,6 +35,7 @@ from agents.config import (
     LLM_API_KEY,
     LLM_OPTIONS,
     PRIMARY_MODEL,
+    SANDBOX_BASE_IMAGE,
     SANDBOX_IMAGE,
     SANDBOX_TIMEOUT_SECONDS,
 )
@@ -61,93 +64,111 @@ VALIDATOR_SYSTEM_PROMPT: str = dedent("""\
 # ---------------------------------------------------------------------------
 # Docker sandbox logic
 # ---------------------------------------------------------------------------
+def _write_tree(root: Path, files: dict[str, str]) -> None:
+    """Write ``{relative_path: content}`` under *root*, creating directories."""
+    for rel, content in files.items():
+        dest = root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+
+
+def _apply_patch(root: Path, file_path: str, diff_text: str) -> str | None:
+    """Apply *diff_text* to the tree under *root* with GNU ``patch``.
+
+    LLM diffs name the file either relative to the repo (``a/sample-app/app.py``)
+    or by its basename (``a/app.py``), so try the repo root and the file's own
+    directory, each with ``-p1`` and ``-p0``.  Returns None on success, or the
+    error output of the last attempt.
+    """
+    file_dir = root / Path(file_path).parent
+    error = "patch was not attempted"
+    for cwd in dict.fromkeys([root, file_dir]):
+        for strip in ("-p1", "-p0"):
+            base = ["patch", "--forward", "--batch", "--no-backup-if-mismatch", strip]
+            check = subprocess.run(
+                [*base, "--dry-run"], input=diff_text, text=True, cwd=cwd, capture_output=True,
+            )
+            if check.returncode == 0:
+                subprocess.run(base, input=diff_text, text=True, cwd=cwd, capture_output=True, check=True)
+                return None
+            error = (check.stdout + check.stderr).strip()
+    return error
+
+
+def _ensure_sandbox_image(client: docker.DockerClient) -> None:
+    """Build the sandbox image (base + pytest + the sample app's deps) once.
+
+    The sandbox runs with networking disabled, so dependencies must be baked in.
+    """
+    try:
+        client.images.get(SANDBOX_IMAGE)
+    except ImageNotFound:
+        dockerfile = (
+            f"FROM {SANDBOX_BASE_IMAGE}\n"
+            "RUN pip install --no-cache-dir pytest flask prometheus_client\n"
+        )
+        client.images.build(fileobj=io.BytesIO(dockerfile.encode()), tag=SANDBOX_IMAGE, rm=True)
+
+
 def _run_tests_in_sandbox(
     file_path: str,
     original_content: str,
     diff_text: str,
+    extra_files: dict[str, str] | None = None,
 ) -> dict:
-    """Apply *diff_text* to *original_content* inside a Docker container and
-    run ``pytest``.
+    """Apply *diff_text* to *original_content* and run ``pytest`` on it inside a
+    throwaway Docker container.
 
     Parameters
     ----------
     file_path:
-        Path the file would have on disk (used to recreate directory layout
-        inside the container).
+        Repo-relative path of the file being patched (e.g. ``sample-app/app.py``).
     original_content:
         The original source code of the file being patched.
     diff_text:
         A unified diff string produced by the Patch Generator.
+    extra_files:
+        Other files the tests need (e.g. the test module), ``{path: content}``.
 
     Returns
     -------
     dict
         ``{"exit_code": int, "output": str}``
     """
-    client = docker.from_env()
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _write_tree(root, {**(extra_files or {}), file_path: original_content})
 
-    # Ensure the sandbox base image is available locally.
+        error = _apply_patch(root, file_path, diff_text)
+        if error is not None:
+            return {"exit_code": 1, "output": f"Patch could not be applied:\n{error}"[:4000]}
+
+        # Package the patched tree; the container gets a copy, never a host mount.
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as tar:
+            tar.add(td, arcname="workspace")
+        archive.seek(0)
+
+    workdir = str(Path("/workspace") / Path(file_path).parent)
     try:
-        client.images.get(SANDBOX_IMAGE)
-    except ImageNotFound:
-        client.images.pull(SANDBOX_IMAGE)
-
-    # Build a small shell script that:
-    #   1. Writes the original file
-    #   2. Applies the diff via `patch`
-    #   3. Installs minimal deps (pytest + whatever the file imports)
-    #   4. Runs pytest
-    # We pass everything via environment variables to avoid bind-mounts.
-
-    target = Path(file_path).name
-    target_dir = "/workspace"
-
-    setup_script = dedent(f"""\
-        set -e
-        mkdir -p {target_dir}
-        cd {target_dir}
-
-        # Write the original source file
-        cat > {target} << 'ORIGINAL_EOF'
-        {original_content}
-        ORIGINAL_EOF
-
-        # Write the diff
-        cat > patch.diff << 'DIFF_EOF'
-        {diff_text}
-        DIFF_EOF
-
-        # Install patch utility and pytest
-        apt-get update -qq && apt-get install -y -qq patch > /dev/null 2>&1
-        pip install --quiet pytest flask 2>/dev/null
-
-        # Apply the diff  (strip leading a/ b/ prefixes)
-        patch --forward --no-backup-if-mismatch -p1 < patch.diff || true
-
-        # Run pytest — collect output regardless of pass/fail
-        python -m pytest {target} -v --tb=short 2>&1 || true
-    """)
-
-    try:
-        container = client.containers.run(
+        client = docker.from_env()
+        _ensure_sandbox_image(client)
+        container = client.containers.create(
             image=SANDBOX_IMAGE,
-            command=["bash", "-c", setup_script],
+            command=["python", "-m", "pytest", "-v", "--tb=short", "-p", "no:cacheprovider"],
+            working_dir=workdir,
+            environment={"PYTHONPATH": workdir, "PYTHONDONTWRITEBYTECODE": "1"},
             network_mode="none",           # no network access
             mem_limit="256m",              # hard memory cap
-            stdout=True,
-            stderr=True,
-            detach=True,
         )
-
-        # Wait for the container to finish (with timeout).
-        result = container.wait(timeout=SANDBOX_TIMEOUT_SECONDS)
-        exit_code = result.get("StatusCode", -1)
-        logs = container.logs(stdout=True, stderr=True).decode(
-            "utf-8", errors="replace"
-        )
-
-        # Clean up the container.
-        container.remove(force=True)
+        try:
+            container.put_archive("/", archive.getvalue())
+            container.start()
+            result = container.wait(timeout=SANDBOX_TIMEOUT_SECONDS)
+            exit_code = result.get("StatusCode", -1)
+            logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+        finally:
+            container.remove(force=True)
 
         return {"exit_code": exit_code, "output": logs[-4000:]}
 
@@ -175,21 +196,13 @@ def _run_opa_checks(
         client.images.pull("openpolicyagent/conftest:v0.48.0")
 
     with tempfile.TemporaryDirectory() as td:
-        target_name = Path(file_path).name
-        target_path = Path(td) / target_name
-        target_path.write_text(original_content)
+        target_name = file_path
+        _write_tree(Path(td), {file_path: original_content})
 
-        patch_path = Path(td) / "patch.diff"
-        patch_path.write_text(diff_text)
-
-        # Apply patch locally
-        try:
-            subprocess.run(
-                ["patch", "--forward", "--no-backup-if-mismatch", "-p1", "-i", "patch.diff"],
-                cwd=td, check=True, capture_output=True
-            )
-        except subprocess.CalledProcessError as e:
-            return {"exit_code": 1, "output": f"Patch failed in OPA check: {e.stderr.decode()}"}
+        if diff_text.strip():
+            error = _apply_patch(Path(td), file_path, diff_text)
+            if error is not None:
+                return {"exit_code": 1, "output": f"Patch failed in OPA check: {error}"}
 
         # Write file path meta for allowlist.rego
         meta_path = Path(td) / "meta.json"
@@ -288,6 +301,7 @@ def build_validation_task(
     file_path: str,
     original_content: str,
     diff_text: str,
+    extra_files: dict[str, str] | None = None,
 ) -> Task:
     """Create a CrewAI Task for the Validation Officer.
 
@@ -304,6 +318,8 @@ def build_validation_task(
         The original source code content of the file.
     diff_text:
         The unified diff string from the Patch Generator.
+    extra_files:
+        Other source files the tests need, ``{path: content}``.
 
     Returns
     -------
@@ -316,7 +332,7 @@ def build_validation_task(
         sandbox_result = opa_result
     else:
         # 2. If it passes OPA, run the actual tests in the sandbox
-        sandbox_result = _run_tests_in_sandbox(file_path, original_content, diff_text)
+        sandbox_result = _run_tests_in_sandbox(file_path, original_content, diff_text, extra_files)
 
     return Task(
         description=dedent(f"""\

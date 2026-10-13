@@ -77,7 +77,7 @@ To run GhostOps locally, you'll need Docker, `kind`, `kubectl`, `helm`, and `pyt
    Ensure you have a `.env` file or Vault running with your `ANTHROPIC_API_KEY` and `GITHUB_TOKEN`.
 5. **Run the API & Agents:**
    ```bash
-   uvicorn backend.main:app --reload --port 8000
+   uvicorn backend.main:app --host 0.0.0.0 --port 8000
    ```
    *(Ensure port-forwards for Jaeger (4317), Prometheus (9090), and Grafana (3000) are active if viewing telemetry).*
 

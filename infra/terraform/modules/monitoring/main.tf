@@ -538,6 +538,7 @@ resource "kubernetes_config_map_v1" "grafana_datasources" {
       datasources:
         # Prometheus — for cluster metrics (memory, CPU, alerts)
         - name: Prometheus
+          uid: prometheus
           type: prometheus
           access: proxy
           url: http://prometheus.monitoring.svc.cluster.local:9090
@@ -546,6 +547,7 @@ resource "kubernetes_config_map_v1" "grafana_datasources" {
 
         # GhostOps API — JSON API datasource for incident data
         - name: GhostOps-API
+          uid: ghostops-api
           type: marcusolsson-json-datasource
           access: proxy
           url: http://${var.docker_bridge_gateway}:8000
