@@ -423,8 +423,8 @@ def _apply_diff(
     for filename, original_content in source_files.items():
         # Find the actual path in the repo.  Try common locations.
         candidates = [
-            repo / "sample-app" / filename,
             repo / filename,
+            repo / "sample-app" / filename,
         ]
         target_path = None
         for c in candidates:
@@ -433,8 +433,8 @@ def _apply_diff(
                 break
 
         if target_path is None:
-            # If file doesn't exist yet, put it in sample-app/
-            target_path = repo / "sample-app" / filename
+            # If file doesn't exist yet, use its repo-relative path, or sample-app/ for a bare name
+            target_path = repo / filename if "/" in filename else repo / "sample-app" / filename
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Apply the unified diff manually using Python's difflib-style

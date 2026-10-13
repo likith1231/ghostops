@@ -15,6 +15,7 @@ data:
     datasources:
       # Prometheus — for cluster metrics (memory, CPU, alerts)
       - name: Prometheus
+        uid: prometheus
         type: prometheus
         access: proxy
         url: http://prometheus.monitoring.svc.cluster.local:9090
@@ -24,6 +25,7 @@ data:
       # GhostOps API — JSON API datasource for incident data
       # Points at the FastAPI backend running on the host
       - name: GhostOps-API
+        uid: ghostops-api
         type: marcusolsson-json-datasource
         access: proxy
         # The backend runs on the host machine at port 8000.

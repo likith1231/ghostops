@@ -102,5 +102,7 @@ else:
 # ---------------------------------------------------------------------------
 # Docker / sandbox settings
 # ---------------------------------------------------------------------------
-SANDBOX_IMAGE: str = "python:3.11-slim"
+SANDBOX_BASE_IMAGE: str = "python:3.11-slim"
+# Base image + pytest and the sample app's deps, built on first use (the sandbox has no network).
+SANDBOX_IMAGE: str = "ghostops-sandbox:py3.11"
 SANDBOX_TIMEOUT_SECONDS: int = 120

@@ -52,6 +52,11 @@ SAMPLE_APP_SOURCE: str = os.getenv(
     "SAMPLE_APP_SOURCE",
     str(_PROJECT_ROOT / "sample-app" / "app.py"),
 )
+# The app's tests: the Validation Officer runs them against the patched code.
+SAMPLE_APP_TESTS: str = os.getenv(
+    "SAMPLE_APP_TESTS",
+    str(_PROJECT_ROOT / "sample-app" / "test_app.py"),
+)
 POD_LOG_LINES: int = int(os.getenv("POD_LOG_LINES", "20"))
 POD_NAMESPACE: str = os.getenv("POD_NAMESPACE", "default")
 
@@ -90,9 +95,6 @@ try:
     )
     provider.add_span_processor(processor)
     logger.info("OpenTelemetry exporter configured with gRPC endpoint: %s", OTEL_ENDPOINT)
-    
-    # Temporarily enable OpenTelemetry debug logging to reveal silent gRPC failures
-    logging.getLogger("opentelemetry.exporter.otlp.proto.grpc").setLevel(logging.DEBUG)
 except Exception as e:
     logger.warning("Failed to initialize OTLP exporter, tracing will be disabled. Error: %s", e)
 
@@ -226,14 +228,19 @@ def _query_prometheus_memory(pod_name: str) -> dict[str, Any]:
 def _read_source_file(path: str) -> dict[str, str]:
     """Read the sample-app source file from disk.
 
-    Returns a ``{filename: content}`` dict matching the ``source_files``
-    shape in ``failure_context``.
+    Returns a ``{path: content}`` dict matching the ``source_files`` shape in
+    ``failure_context``.  The path is relative to the repo root (e.g.
+    ``sample-app/app.py``) so the OPA allowlist and the PR target the real file.
     """
     try:
-        content = Path(path).read_text(encoding="utf-8")
-        basename = Path(path).name
-        logger.info("Read source file: %s (%d bytes)", path, len(content))
-        return {basename: content}
+        resolved = Path(path).resolve()
+        content = resolved.read_text(encoding="utf-8")
+        try:
+            key = str(resolved.relative_to(_PROJECT_ROOT))
+        except ValueError:
+            key = resolved.name
+        logger.info("Read source file: %s (%d bytes)", key, len(content))
+        return {key: content}
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to read source file %s: %s", path, exc)
         return {}
@@ -325,6 +332,7 @@ async def receive_alert(request: Request) -> JSONResponse:
 
         # ---- Step C: Build failure_context -----------------------------
         source_files = _read_source_file(SAMPLE_APP_SOURCE)
+        source_files.update(_read_source_file(SAMPLE_APP_TESTS))
 
         failure_context: dict[str, Any] = {
             "alert_type": "memory_high",
