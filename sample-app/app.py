@@ -37,8 +37,8 @@ def health():
 
 @app.route("/leak")
 def leak():
-    # Intentional bug for the GhostOps demo: every call keeps 10 MiB forever.
-    leak_store.append("0" * 10 * 1024 * 1024)
+    # Allocate a temporary 10 MiB payload without retaining it; it is freed when the request ends.
+    _ = "0" * 10 * 1024 * 1024
     return jsonify(status="ok")
 
 
