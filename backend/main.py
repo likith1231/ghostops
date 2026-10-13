@@ -18,14 +18,14 @@ import json
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
 
 # ---------------------------------------------------------------------------
 # Path setup — ensure the project root is on sys.path so we can import the
@@ -247,10 +247,109 @@ def _read_source_file(path: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline runner (background)
+# ---------------------------------------------------------------------------
+# One incident at a time: the deployer switches git branches to open the PR.
+_pipeline_lock = threading.Lock()
+
+
+def _process_alert(alert: dict[str, Any]) -> None:
+    """Gather context for one firing alert and run the agent pipeline.
+
+    Runs as a background task after the webhook has answered, so a pipeline
+    that takes minutes never makes Alertmanager time out and resend the alert.
+    """
+    labels = alert.get("labels", {})
+    pod_name = labels.get("pod", "")
+    if not _pipeline_lock.acquire(blocking=False):
+        logger.warning("Pipeline already running — skipping alert for pod=%s", pod_name)
+        return
+    try:
+        _run_alert_pipeline(alert, pod_name)
+    finally:
+        _pipeline_lock.release()
+
+
+def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
+    logger.info(
+        "Processing SampleAppHighMemory alert for pod=%s (started=%s)",
+        pod_name,
+        alert.get("startsAt", "unknown"),
+    )
+
+    # ---- Step A: Fetch pod logs ------------------------------------
+    logs = _fetch_pod_logs(pod_name) if pod_name else [
+        "[WARN] No pod name in alert labels — skipping log fetch"
+    ]
+
+    # ---- Step B: Query Prometheus for memory metrics ---------------
+    metrics = _query_prometheus_memory(pod_name) if pod_name else {}
+
+    # ---- Step C: Build failure_context -----------------------------
+    source_files = _read_source_file(SAMPLE_APP_SOURCE)
+    source_files.update(_read_source_file(SAMPLE_APP_TESTS))
+
+    failure_context: dict[str, Any] = {
+        "alert_type": "memory_high",
+        "logs": logs,
+        "metrics": metrics,
+        "source_files": source_files,
+        "past_incidents": [],  # knowledge base integration comes later
+    }
+
+    logger.info(
+        "Built failure_context: %d log lines, %d metric keys, %d source files",
+        len(logs),
+        len(metrics),
+        len(source_files),
+    )
+
+    # ---- Step D: Run the agent pipeline ----------------------------
+    try:
+        pipeline_result = run_pipeline(failure_context)
+
+        # ---- Step E: Log the result clearly ------------------------
+        logger.info("=" * 72)
+        logger.info("PIPELINE RESULT for pod=%s", pod_name)
+        logger.info("=" * 72)
+        logger.info(
+            "Diagnosis: %s",
+            json.dumps(pipeline_result.get("diagnosis", {}), indent=2),
+        )
+        logger.info(
+            "Patch diff:\n%s",
+            pipeline_result.get("patch", {}).get("diff", "(none)"),
+        )
+        logger.info(
+            "Validation passed: %s",
+            pipeline_result.get("validation_result", {}).get("passed"),
+        )
+        logger.info("=" * 72)
+
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Pipeline failed for pod=%s: %s", pod_name, exc, exc_info=True)
+        err_str = str(exc)
+
+        # Detect Litellm / Gemini quota limits
+        if "RateLimitError" in str(type(exc)) or "429" in err_str or "Quota" in err_str:
+            clean_error = "API Quota Exhausted / Rate Limited"
+        else:
+            clean_error = f"Pipeline Execution Failed: {err_str}"
+
+        pipeline_result = {
+            "error": clean_error,
+            "diagnosis": {"root_cause": "Pipeline failed: " + clean_error},
+            "patch": {"diff": "", "explanation": "No patch generated due to failure"},
+            "validation_result": {"passed": False, "reason": "Pipeline did not complete"},
+            "pr_result": {"pr_created": False, "reason": "pipeline_failed"},
+        }
+
+
+# ---------------------------------------------------------------------------
 # Webhook endpoint
 # ---------------------------------------------------------------------------
 @app.post("/webhook/alert")
-async def receive_alert(request: Request) -> JSONResponse:
+async def receive_alert(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
     """Receive an Alertmanager webhook payload and process each firing
     ``SampleAppHighMemory`` alert through the agent pipeline.
 
@@ -316,90 +415,11 @@ async def receive_alert(request: Request) -> JSONResponse:
             })
             continue
 
-        logger.info(
-            "Processing SampleAppHighMemory alert for pod=%s (started=%s)",
-            pod_name,
-            alert.get("startsAt", "unknown"),
-        )
+        background_tasks.add_task(_process_alert, alert)
+        results.append({"alert": alert_name, "pod": pod_name, "action": "pipeline_started"})
 
-        # ---- Step A: Fetch pod logs ------------------------------------
-        logs = _fetch_pod_logs(pod_name) if pod_name else [
-            "[WARN] No pod name in alert labels — skipping log fetch"
-        ]
-
-        # ---- Step B: Query Prometheus for memory metrics ---------------
-        metrics = _query_prometheus_memory(pod_name) if pod_name else {}
-
-        # ---- Step C: Build failure_context -----------------------------
-        source_files = _read_source_file(SAMPLE_APP_SOURCE)
-        source_files.update(_read_source_file(SAMPLE_APP_TESTS))
-
-        failure_context: dict[str, Any] = {
-            "alert_type": "memory_high",
-            "logs": logs,
-            "metrics": metrics,
-            "source_files": source_files,
-            "past_incidents": [],  # knowledge base integration comes later
-        }
-
-        logger.info(
-            "Built failure_context: %d log lines, %d metric keys, %d source files",
-            len(logs),
-            len(metrics),
-            len(source_files),
-        )
-
-        # ---- Step D: Run the agent pipeline ----------------------------
-        try:
-            # Run in a worker thread so /health, /metrics and the Grafana API stay
-            # responsive during the few minutes the agents take.
-            pipeline_result = await run_in_threadpool(run_pipeline, failure_context)
-
-            # ---- Step E: Log the result clearly ------------------------
-            logger.info("=" * 72)
-            logger.info("PIPELINE RESULT for pod=%s", pod_name)
-            logger.info("=" * 72)
-            logger.info(
-                "Diagnosis: %s",
-                json.dumps(pipeline_result.get("diagnosis", {}), indent=2),
-            )
-            logger.info(
-                "Patch diff:\n%s",
-                pipeline_result.get("patch", {}).get("diff", "(none)"),
-            )
-            logger.info(
-                "Validation passed: %s",
-                pipeline_result.get("validation_result", {}).get("passed"),
-            )
-            logger.info("=" * 72)
-
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Pipeline failed for pod=%s: %s", pod_name, exc, exc_info=True)
-            err_str = str(exc)
-            
-            # Detect Litellm / Gemini quota limits
-            if "RateLimitError" in str(type(exc)) or "429" in err_str or "Quota" in err_str:
-                clean_error = "API Quota Exhausted / Rate Limited"
-            else:
-                clean_error = f"Pipeline Execution Failed: {err_str}"
-                
-            pipeline_result = {
-                "error": clean_error,
-                "diagnosis": {"root_cause": "Pipeline failed: " + clean_error},
-                "patch": {"diff": "", "explanation": "No patch generated due to failure"},
-                "validation_result": {"passed": False, "reason": "Pipeline did not complete"},
-                "pr_result": {"pr_created": False, "reason": "pipeline_failed"},
-            }
-
-        # ---- Step F: Build response ------------------------------------
-        results.append({
-            "alert": alert_name,
-            "pod": pod_name,
-            "pipeline_result": pipeline_result,
-        })
-
-    # If there was exactly one actionable alert, return it directly at the
-    # top level for convenience; otherwise wrap in a list.
+    # The pipeline runs after this response. If there was exactly one alert,
+    # return it at the top level for convenience; otherwise wrap in a list.
     if len(results) == 1:
         return JSONResponse(
             status_code=200,

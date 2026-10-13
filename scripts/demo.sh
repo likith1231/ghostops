@@ -146,6 +146,7 @@ cmd_tests() {
     "PR safety gates: no PR unless validation passed|agents/tests/test_deployer.py"
     "Knowledge base: every incident is remembered|agents/tests/test_knowledge_base.py"
     "Backend API: health and incident endpoints|backend/tests/test_incidents.py"
+    "Alert webhook: firing alerts start the AI pipeline|backend/tests/test_webhook.py"
   )
   local summary=() all_ok=0 i=1
   for g in "${groups[@]}"; do
@@ -178,6 +179,17 @@ cmd_leak() {
   curl -fsS -m 3 "$PROM/-/ready" >/dev/null 2>&1 || die "Prometheus is not reachable on :9090"
   curl -fsS -m 3 localhost:5000/health >/dev/null 2>&1 || { forward sample-app 5000 default deploy/sample-app 5000; sleep 3; }
   curl -fsS -m 3 localhost:5000/health >/dev/null 2>&1 || die "sample-app not reachable on :5000"
+
+  # A previous run leaves leaked memory (more leaking would OOM-kill the pod) and
+  # possibly a firing alert (Alertmanager would not notify again); start clean.
+  local leaked
+  leaked=$(curl -fsS -m 5 localhost:5000/health | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["leaked_objects"])' 2>/dev/null)
+  if [ "${leaked:-0}" != 0 ] || [ "$(alert_state)" != inactive ]; then
+    echo "  Step 0: cleaning up after the previous run (restarting the sample app)"
+    cmd_reset >/dev/null
+    for _ in $(seq 1 36); do [ "$(alert_state)" = inactive ] && break; sleep 5; done
+    ok "sample app restarted, old alert cleared"
+  fi
 
   local before started
   before=$(incident_total); before=${before:-0}
@@ -224,10 +236,12 @@ cmd_ci() {
 cmd_reset() {
   kctl rollout restart deploy/sample-app >/dev/null
   kctl rollout status deploy/sample-app --timeout=120s
-  # The old port-forward points at the deleted pod.
-  [ -f "$STATE_DIR/sample-app.pid" ] && kill "$(cat "$STATE_DIR/sample-app.pid")" 2>/dev/null
+  # Any port-forward on :5000 points at the deleted pod, including ones started by hand.
+  pkill -f 'port-forward.* 5000:5000' 2>/dev/null
   rm -f "$STATE_DIR/sample-app.pid"
+  sleep 1
   forward sample-app 5000 default deploy/sample-app 5000
+  for _ in $(seq 1 10); do curl -fsS -m 2 localhost:5000/health >/dev/null 2>&1 && break; sleep 1; done
   ok "sample-app restarted with empty memory"
 }
 

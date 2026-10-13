@@ -369,7 +369,7 @@ resource "kubernetes_config_map_v1" "alertmanager_config" {
         receiver: "ghostops-webhook"
         group_by: ["alertname", "severity"]
         group_wait: 10s
-        group_interval: 5m
+        group_interval: 30s
         repeat_interval: 1h
 
       receivers:
