@@ -3,7 +3,7 @@
 import { Line } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer } from "@react-three/postprocessing";
-import { useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import * as THREE from "three";
 
 export type NodeState = "idle" | "running" | "done" | "error" | "held";
@@ -78,12 +78,20 @@ function PipelineNode({ position, state }: { position: THREE.Vector3; state: Nod
   );
 }
 
-/** A bright packet travelling into the node that is currently working. */
+/** How long the packet takes to travel from one stage to the next. */
+const TRAVEL_MS = 650;
+
+/** A bright packet making one trip into the stage that just started; it vanishes on arrival. */
 function Packet({ from, to }: { from: THREE.Vector3; to: THREE.Vector3 }) {
   const ref = useRef<THREE.Mesh>(null);
+  const start = useRef<number | null>(null);
   useFrame(({ clock }) => {
-    const t = (clock.elapsedTime * 0.9) % 1;
-    ref.current?.position.lerpVectors(from, to, t);
+    if (!ref.current) return;
+    start.current ??= clock.elapsedTime;
+    const t = Math.min(1, ((clock.elapsedTime - start.current) * 1000) / TRAVEL_MS);
+    const eased = 1 - Math.pow(1 - t, 2);
+    ref.current.position.lerpVectors(from, to, eased);
+    ref.current.visible = t < 1;
   });
   return (
     <mesh ref={ref}>
@@ -117,9 +125,8 @@ function LabelSync({ points, vertical, labels }: { points: THREE.Vector3[]; vert
   return null;
 }
 
-function Pipeline({ states, labels }: { states: NodeState[]; labels: RefObject<(HTMLDivElement | null)[]> }) {
+function Pipeline({ states, travelling, labels }: { states: NodeState[]; travelling: number; labels: RefObject<(HTMLDivElement | null)[]> }) {
   const { points, vertical } = useLayout(states.length);
-  const running = states.findIndex((s) => s === "running");
 
   return (
     <group>
@@ -139,7 +146,7 @@ function Pipeline({ states, labels }: { states: NodeState[]; labels: RefObject<(
           />
         );
       })}
-      {running > 0 && <Packet from={points[running - 1]} to={points[running]} />}
+      {travelling > 0 && <Packet key={travelling} from={points[travelling - 1]} to={points[travelling]} />}
       {points.map((p, i) => (
         <PipelineNode key={i} position={p} state={states[i]} />
       ))}
@@ -161,15 +168,30 @@ function CameraFit() {
   return null;
 }
 
-export default function PipelineScene({ states }: { states: NodeState[] }) {
+export default function PipelineScene({ states: incoming }: { states: NodeState[] }) {
   const labels = useRef<(HTMLDivElement | null)[]>([]);
+
+  // When a stage starts, the packet travels to it first; the node (and its label and the
+  // line into it) only light up once the packet arrives.
+  const running = incoming.findIndex((s) => s === "running");
+  const [arrived, setArrived] = useState(-1);
+  useEffect(() => {
+    if (running <= 0) {
+      setArrived(-1); // between runs: the next run's first stage travels again
+      return;
+    }
+    const id = setTimeout(() => setArrived(running), TRAVEL_MS);
+    return () => clearTimeout(id);
+  }, [running]);
+  const travelling = running > 0 && arrived !== running ? running : -1;
+  const states = incoming.map((s, i) => (i === travelling ? "idle" : s));
   return (
     <div className="relative h-full w-full">
       <Canvas camera={{ position: [0, 1.6, 12], fov: 42 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }}>
         <ambientLight intensity={0.4} />
         <pointLight position={[0, 4, 6]} intensity={30} color="#a78bfa" />
         <CameraFit />
-        <Pipeline states={states} labels={labels} />
+        <Pipeline states={states} travelling={travelling} labels={labels} />
         <EffectComposer>
           <Bloom mipmapBlur luminanceThreshold={0.3} intensity={0.9} />
         </EffectComposer>

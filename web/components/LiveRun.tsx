@@ -15,7 +15,7 @@ const PipelineScene = dynamic(() => import("./three/PipelineScene"), {
 });
 
 /** Minimum time each pipeline step stays on screen. */
-const STEP_MS = 850;
+const STEP_MS = 1100;
 
 const STAGE_TO_NODE: Record<string, NodeState> = { pending: "idle", running: "running", done: "done", error: "error" };
 
