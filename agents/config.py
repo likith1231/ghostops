@@ -66,7 +66,10 @@ os.environ["CREWAI_DISABLE_TELEMETRY"] = get_secret("CREWAI_DISABLE_TELEMETRY", 
 ANTHROPIC_API_KEY: str = get_secret("ANTHROPIC_API_KEY", "")
 GOOGLE_API_KEY: str = get_secret("GOOGLE_API_KEY", "")
 
-if not (ANTHROPIC_API_KEY or GOOGLE_API_KEY):
+# Offline mode: rule-based diagnosis and patches replace the LLM calls (agents/mock_llm.py).
+MOCK_LLM: bool = get_secret("GHOSTOPS_MOCK_LLM", "").lower() in {"1", "true", "yes"}
+
+if not (ANTHROPIC_API_KEY or GOOGLE_API_KEY or MOCK_LLM):
     raise EnvironmentError(
         "ANTHROPIC_API_KEY is not set. "
         f"Make sure it exists in {_env_path} or is exported in your shell."

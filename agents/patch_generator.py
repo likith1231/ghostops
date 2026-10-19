@@ -44,6 +44,8 @@ PATCHGEN_SYSTEM_PROMPT: str = dedent("""\
     4. For ci_test_failure issues:
        • Fix the APPLICATION code that causes the test to fail.
        • Only modify the test if the test expectation is demonstrably wrong.
+       • For null_reference issues, add a guard for the None/empty value at
+         the line named in the traceback, returning the documented fallback.
     5. After the diff, include a one-paragraph ``## Explanation`` section
        describing WHAT you changed and WHY.
     6. Return your answer as a JSON object:

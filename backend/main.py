@@ -18,13 +18,13 @@ import json
 import logging
 import os
 import sys
-import threading
 from pathlib import Path
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 # ---------------------------------------------------------------------------
@@ -110,6 +110,14 @@ app = FastAPI(
 )
 
 FastAPIInstrumentor.instrument_app(app)
+
+# The web dashboard (web/) runs on its own origin; Grafana already owns :3000.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("GHOSTOPS_CORS_ORIGINS", "http://localhost:3100,http://127.0.0.1:3100").split(","),
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +257,8 @@ def _read_source_file(path: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Pipeline runner (background)
 # ---------------------------------------------------------------------------
-# One incident at a time: the deployer switches git branches to open the PR.
-_pipeline_lock = threading.Lock()
+# One incident at a time (shared with /api/simulate): the deployer switches git branches to open the PR.
+from backend.runs import pipeline_lock as _pipeline_lock  # noqa: E402
 
 
 def _process_alert(alert: dict[str, Any]) -> None:
@@ -486,6 +494,8 @@ async def metrics() -> Response:
 # ---------------------------------------------------------------------------
 # Incident API Router
 # ---------------------------------------------------------------------------
-from backend.routers import incidents
+from backend.routers import detect, incidents, runs
 
 app.include_router(incidents.router)
+app.include_router(runs.router)
+app.include_router(detect.router)

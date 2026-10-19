@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 import sqlite3
 import logging
 from agents.knowledge_base import _DB_PATH, get_past_incidents
@@ -83,3 +83,21 @@ async def incidents_timeseries() -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to query incident timeseries: %s", exc)
         return []
+
+
+@router.get("/{incident_id}")
+async def incident_detail(incident_id: int) -> dict:
+    """One incident with its full diff and outcome, for the dashboard's detail view."""
+    if not _DB_PATH.exists():
+        raise HTTPException(status_code=404, detail="incident not found")
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+        conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to query incident %s: %s", incident_id, exc)
+        raise HTTPException(status_code=500, detail="knowledge base unavailable") from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return dict(row)

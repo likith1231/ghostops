@@ -18,6 +18,7 @@ Public API
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,9 +26,9 @@ from typing import Any
 
 logger = logging.getLogger("ghostops.knowledge_base")
 
-# Database lives alongside the agents code, in agents/data/
+# Database lives alongside the agents code, in agents/data/ (GHOSTOPS_DB_PATH overrides it).
 _DB_DIR = Path(__file__).resolve().parent / "data"
-_DB_PATH = _DB_DIR / "incidents.db"
+_DB_PATH = Path(os.getenv("GHOSTOPS_DB_PATH") or _DB_DIR / "incidents.db")
 
 # ---------------------------------------------------------------------------
 # Schema
