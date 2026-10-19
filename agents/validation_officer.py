@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import subprocess
 import tarfile
@@ -268,6 +269,54 @@ def _run_opa_checks(
     return None
 
 
+def run_validation_checks(
+    file_path: str,
+    original_content: str,
+    diff_text: str,
+    extra_files: dict[str, str] | None = None,
+) -> dict:
+    """Run the OPA policy check, then (only if it passes) the sandboxed tests.
+
+    Fails closed: an empty diff never passes, and a policy violation never
+    reaches the sandbox.  Returns ``{"exit_code": int, "output": str}``.
+    """
+    if not diff_text.strip():
+        return {"exit_code": 1, "output": "No patch to validate (empty diff)."}
+    opa_result = _run_opa_checks(file_path, original_content, diff_text)
+    if opa_result is not None:
+        return opa_result
+    return _run_tests_in_sandbox(file_path, original_content, diff_text, extra_files)
+
+
+_FAILED_TEST = re.compile(r"^(?:FAILED (\S+)|(\S+::\S+) FAILED)", re.MULTILINE)
+_PASSED_COUNT = re.compile(r"(\d+) passed")
+
+
+def interpret_sandbox_result(sandbox_result: dict) -> dict:
+    """Turn a raw sandbox result into the Validation Officer's verdict, without an LLM."""
+    exit_code = sandbox_result.get("exit_code", -1)
+    output = str(sandbox_result.get("output", ""))
+    failing = list(dict.fromkeys(a or b for a, b in _FAILED_TEST.findall(output)))
+    passed = exit_code == 0
+    if passed:
+        m = _PASSED_COUNT.search(output)
+        summary = f"All {m.group(1)} tests passed in the sandbox." if m else "All tests passed in the sandbox."
+    elif "OPA Policy Violation" in output:
+        summary = "Rejected by OPA policy before reaching the sandbox."
+    elif output.startswith("Patch could not be applied") or "Patch failed" in output:
+        summary = "The patch did not apply cleanly."
+    elif failing:
+        summary = f"{len(failing)} test(s) still failing after the patch."
+    else:
+        summary = f"Validation failed (exit code {exit_code})."
+    return {
+        "passed": passed,
+        "summary": summary,
+        "failing_tests": failing,
+        "test_output": output[-4000:],
+    }
+
+
 # ---------------------------------------------------------------------------
 # CrewAI agent & task builders
 # ---------------------------------------------------------------------------
@@ -326,13 +375,7 @@ def build_validation_task(
     Task
         A CrewAI Task whose output is the JSON validation verdict.
     """
-    # 1. First, check the patch against OPA policies
-    opa_result = _run_opa_checks(file_path, original_content, diff_text)
-    if opa_result is not None:
-        sandbox_result = opa_result
-    else:
-        # 2. If it passes OPA, run the actual tests in the sandbox
-        sandbox_result = _run_tests_in_sandbox(file_path, original_content, diff_text, extra_files)
+    sandbox_result = run_validation_checks(file_path, original_content, diff_text, extra_files)
 
     return Task(
         description=dedent(f"""\

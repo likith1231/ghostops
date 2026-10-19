@@ -7,6 +7,8 @@ sample-app/ so a validated fix becomes a PR against them:
 
 * B1 ``leak_context()`` — /leak in sample-app/app.py keeps 10 MiB per request.
 * C4 ``ci_context()``   — multiply() in sample-app/math_utils.py fails its test.
+* A1 ``exception_context()`` — display_name() in sample-app/user_service.py
+  raises on an empty upstream payload.
 """
 
 from __future__ import annotations
@@ -59,3 +61,25 @@ def ci_context() -> dict:
         "source_files": _read("sample-app/math_utils.py", "sample-app/test_math_utils.py"),
         "past_incidents": [],
     }
+
+
+def exception_context() -> dict:
+    """Trigger the unhandled exception for real and hand its traceback to the agents."""
+    run = subprocess.run(
+        [sys.executable, "-c", "from user_service import display_name; display_name(None)"],
+        cwd=ROOT / "sample-app", capture_output=True, text=True,
+    )
+    return {
+        "alert_type": "app_exception",
+        "logs": ['10.244.0.1 - - "GET /api/user/profile HTTP/1.1" 500 -', *run.stderr.splitlines()],
+        "metrics": {},
+        "source_files": _read("sample-app/user_service.py", "sample-app/test_user_service.py"),
+        "past_incidents": [],
+    }
+
+
+SCENARIOS = {
+    "b1": ("Memory leak -> OOM", leak_context),
+    "c4": ("CI test failure", ci_context),
+    "a1": ("Unhandled exception (null safety)", exception_context),
+}

@@ -35,7 +35,9 @@ REASONER_SYSTEM_PROMPT: str = dedent("""\
     2. Classify the root cause into EXACTLY ONE of:
        • memory_leak    — evidence of unbounded memory growth or OOM kill.
        • ci_test_failure — a CI/CD test failure (e.g. pytest, GitHub Actions).
-       • unknown         — insufficient evidence for either category.
+       • null_reference — an unhandled exception from using a None/empty value
+                          (e.g. TypeError: 'NoneType' object is not subscriptable).
+       • unknown         — insufficient evidence for any category.
     3. Cite the exact log lines or metric data points that justify the
        classification.  Use the format  `[LOG] <line>`  or  `[METRIC] <name>=<value>`.
     4. Return your answer as a JSON object with these keys:

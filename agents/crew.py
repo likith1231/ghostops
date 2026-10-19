@@ -21,17 +21,35 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from collections.abc import Callable
 from typing import Any
 
 from crewai import Crew, Process
 
+from agents import mock_llm
+from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
-from agents.validation_officer import build_validation_agent, build_validation_task
+from agents.validation_officer import (
+    build_validation_agent,
+    build_validation_task,
+    interpret_sandbox_result,
+    run_validation_checks,
+)
 from opentelemetry import trace
 
 logger = logging.getLogger("ghostops.crew")
 tracer = trace.get_tracer(__name__)
+
+# In mock mode a validated fix opens a real PR only when this is also set.
+MOCK_CREATE_PR: bool = os.getenv("GHOSTOPS_MOCK_CREATE_PR", "").lower() in {"1", "true", "yes"}
+
+StageCallback = Callable[[str, str, dict], None]
+
+
+def _no_op(stage: str, status: str, data: dict) -> None:
+    """Default stage callback."""
 
 
 # ---------------------------------------------------------------------------
@@ -55,7 +73,7 @@ def _safe_json_loads(text: str) -> dict:
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
-def run_pipeline(failure_context: dict) -> dict[str, Any]:
+def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -> dict[str, Any]:
     """Execute the GhostOps diagnosis → patch → validation pipeline.
 
     Parameters
@@ -68,82 +86,112 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
         * ``metrics`` — dict of metric name → recent values
         * ``source_files`` — dict of ``{path: content}`` for relevant source
         * ``past_incidents`` — (optional) list of similar past incidents
+    on_stage:
+        Optional ``(stage, status, data)`` callback, called as each stage
+        (``diagnosis``, ``patch``, ``validation``, ``deploy``) starts and ends.
+        The backend uses it to stream live progress to the dashboard.
 
     Returns
     -------
     dict
         ``{"diagnosis": ..., "patch": ..., "validation_result": ...}``
     """
+    notify = on_stage or _no_op
+
     # ----- 1. DIAGNOSTIC REASONER ------------------------------------
     logger.info("Stage 1/3 — Running Diagnostic Reasoner …")
-    
+    notify("diagnosis", "running", {})
+
     with tracer.start_as_current_span("diagnostic_reasoner") as span:
         span.set_attribute("alert_type", failure_context.get("alert_type", "unknown"))
-        reasoner_agent = build_reasoner_agent()
-        reasoner_task = build_reasoner_task(reasoner_agent, failure_context)
+        if MOCK_LLM:
+            diagnosis = mock_llm.diagnose(failure_context)
+            diagnosis_text = json.dumps(diagnosis)
+        else:
+            reasoner_agent = build_reasoner_agent()
+            reasoner_task = build_reasoner_task(reasoner_agent, failure_context)
 
-        reasoner_crew = Crew(
-            agents=[reasoner_agent],
-            tasks=[reasoner_task],
-            process=Process.sequential,
-            verbose=True,
-        )
-        reasoner_result = reasoner_crew.kickoff()
-        diagnosis_text = str(reasoner_result)
-        diagnosis = _safe_json_loads(diagnosis_text)
+            reasoner_crew = Crew(
+                agents=[reasoner_agent],
+                tasks=[reasoner_task],
+                process=Process.sequential,
+                verbose=True,
+            )
+            reasoner_result = reasoner_crew.kickoff()
+            diagnosis_text = str(reasoner_result)
+            diagnosis = _safe_json_loads(diagnosis_text)
         logger.info("Diagnosis: %s", diagnosis.get("root_cause", "unknown"))
+    notify("diagnosis", "done", diagnosis)
 
     # ----- 2. PATCH GENERATOR ----------------------------------------
     logger.info("Stage 2/3 — Running Patch Generator …")
+    notify("patch", "running", {})
     source_files: dict[str, str] = failure_context.get("source_files", {})
     if not source_files:
         logger.warning("No source_files in failure_context — patch stage may fail.")
 
     with tracer.start_as_current_span("patch_generator"):
-        patch_agent = build_patch_agent()
-        patch_task = build_patch_task(patch_agent, diagnosis_text, source_files)
+        if MOCK_LLM:
+            patch = mock_llm.generate_patch(diagnosis, source_files)
+        else:
+            patch_agent = build_patch_agent()
+            patch_task = build_patch_task(patch_agent, diagnosis_text, source_files)
 
-        patch_crew = Crew(
-            agents=[patch_agent],
-            tasks=[patch_task],
-            process=Process.sequential,
-            verbose=True,
-        )
-        patch_result = patch_crew.kickoff()
-        patch_text = str(patch_result)
-        patch = _safe_json_loads(patch_text)
+            patch_crew = Crew(
+                agents=[patch_agent],
+                tasks=[patch_task],
+                process=Process.sequential,
+                verbose=True,
+            )
+            patch_result = patch_crew.kickoff()
+            patch_text = str(patch_result)
+            patch = _safe_json_loads(patch_text)
         logger.info("Patch generated — diff length: %d chars", len(patch.get("diff", "")))
+    notify("patch", "done", patch)
 
     # ----- 3. VALIDATION OFFICER -------------------------------------
     logger.info("Stage 3/3 — Running Validation Officer …")
-    # Pick the first source file as the target for validation.
-    file_path = next(iter(source_files), "app.py")
+    notify("validation", "running", {})
+    # The mock names the file it patched; it is only trusted if it is one of the
+    # known source files. Otherwise take the first source file.
+    named = patch.get("file_path")
+    file_path = named if named in source_files else next(iter(source_files), "app.py")
     original_content = source_files.get(file_path, "")
     diff_text = patch.get("diff", "")
+    # The other files (e.g. the tests) go into the sandbox alongside the patched one.
+    extra_files = {k: v for k, v in source_files.items() if k != file_path}
 
     with tracer.start_as_current_span("validation_officer") as span:
-        validation_agent = build_validation_agent()
-        # The other files (e.g. the tests) go into the sandbox alongside the patched one.
-        extra_files = {k: v for k, v in source_files.items() if k != file_path}
-        validation_task = build_validation_task(
-            validation_agent, file_path, original_content, diff_text, extra_files
-        )
+        if MOCK_LLM:
+            validation_result = interpret_sandbox_result(
+                run_validation_checks(file_path, original_content, diff_text, extra_files)
+            )
+        else:
+            validation_agent = build_validation_agent()
+            validation_task = build_validation_task(
+                validation_agent, file_path, original_content, diff_text, extra_files
+            )
 
-        validation_crew = Crew(
-            agents=[validation_agent],
-            tasks=[validation_task],
-            process=Process.sequential,
-            verbose=True,
-        )
-        validation_result_raw = validation_crew.kickoff()
-        validation_result = _safe_json_loads(str(validation_result_raw))
+            validation_crew = Crew(
+                agents=[validation_agent],
+                tasks=[validation_task],
+                process=Process.sequential,
+                verbose=True,
+            )
+            validation_result_raw = validation_crew.kickoff()
+            validation_result = _safe_json_loads(str(validation_result_raw))
         span.set_attribute("validation_passed", validation_result.get("passed", False))
         logger.info("Validation passed: %s", validation_result.get("passed"))
+    notify("validation", "done", validation_result)
 
     # ----- 4. DEPLOYMENT ACTION (auto-PR on validated pass) -----------
     pr_result: dict[str, Any] = {"pr_created": False, "reason": "skipped"}
 
-    if validation_result.get("passed") is True:
+    notify("deploy", "running", {})
+    if validation_result.get("passed") is True and MOCK_LLM and not MOCK_CREATE_PR:
+        logger.info("Stage 4/4 — Validation passed (mock mode), skipping PR creation.")
+        pr_result = {"pr_created": False, "reason": "mock_mode"}
+    elif validation_result.get("passed") is True:
         logger.info("Stage 4/4 — Validation passed, creating PR …")
         try:
             from agents.deployer import create_pr
@@ -163,6 +211,8 @@ def run_pipeline(failure_context: dict) -> dict[str, Any]:
     else:
         logger.info("Validation did NOT pass — skipping PR creation.")
         pr_result = {"pr_created": False, "reason": "validation_failed"}
+
+    notify("deploy", "done", pr_result)
 
     # ----- 5. LOG TO KNOWLEDGE BASE (every run, pass or fail) --------
     try:
@@ -195,12 +245,15 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    from agents.scenarios import ci_context, leak_context
+    from agents.scenarios import ci_context, exception_context, leak_context
 
     # Pick which scenario to run based on CLI arg.
     if len(sys.argv) > 1 and sys.argv[1] == "c4":
         print("Running pipeline with C4 (CI failure): sample-app/math_utils.py …")
         context = ci_context()
+    elif len(sys.argv) > 1 and sys.argv[1] == "a1":
+        print("Running pipeline with A1 (unhandled exception): sample-app/user_service.py …")
+        context = exception_context()
     else:
         print("Running pipeline with B1 (memory leak): sample-app/app.py …")
         context = leak_context()

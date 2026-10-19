@@ -585,3 +585,36 @@ def _create_github_pr(
     raise RuntimeError(
         f"GitHub API returned {resp.status_code}: {resp.text[:200]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Rollback (use case C1: canary regression)
+# ---------------------------------------------------------------------------
+_K8S_NAME = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
+
+
+def rollback_deployment(deployment: str, namespace: str = "default") -> dict[str, Any]:
+    """Roll *deployment* back to its previous revision with ``kubectl rollout undo``.
+
+    The one remediation GhostOps applies without a PR: it restores code that was
+    already reviewed and running, it does not introduce new code.  Never raises.
+
+    Returns ``{"rolled_back": bool, "output": str}``.
+    """
+    for value in (deployment, namespace):
+        if not _K8S_NAME.match(value):
+            return {"rolled_back": False, "output": f"invalid Kubernetes name: {value!r}"}
+
+    cmd = ["kubectl", "rollout", "undo", f"deployment/{deployment}", "-n", namespace]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.error("Rollback of %s/%s failed: %s", namespace, deployment, exc)
+        return {"rolled_back": False, "output": str(exc)}
+
+    output = (proc.stdout + proc.stderr).strip()
+    if proc.returncode != 0:
+        logger.error("Rollback of %s/%s failed: %s", namespace, deployment, output)
+        return {"rolled_back": False, "output": output}
+    logger.info("Rolled back %s/%s: %s", namespace, deployment, output)
+    return {"rolled_back": True, "output": output}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agents.detectors.base import Detection
+from agents.detectors.catalogue import USE_CASES
 from agents.detectors.deploy import (
     detect_canary_regression,
     detect_config_drift,
@@ -20,6 +21,7 @@ from agents.detectors.logs import (
 )
 from agents.detectors.metrics import (
     detect_cpu_throttling,
+    detect_disk_saturation,
     detect_error_rate_slo,
     detect_latency_slo,
     detect_memory_leak,
@@ -45,11 +47,13 @@ def run_log_detectors(logs: list[str]) -> list[Detection]:
 
 __all__ = [
     "Detection",
+    "USE_CASES",
     "detect_auth_burst",
     "detect_canary_regression",
     "detect_config_drift",
     "detect_cpu_throttling",
     "detect_crashloop",
+    "detect_disk_saturation",
     "detect_dns_failure",
     "detect_error_rate_slo",
     "detect_hpa_flapping",

@@ -309,3 +309,54 @@ def test_hpa_needs_history():
 def test_detection_to_dict_roundtrip():
     d = detect_latency_slo(1.0).to_dict()
     assert d["use_case"] == "B4" and isinstance(d["evidence"], list)
+
+
+# ---- B3 ------------------------------------------------------------------
+from agents.detectors import USE_CASES, detect_disk_saturation  # noqa: E402
+
+
+def test_disk_saturation_sustained():
+    d = detect_disk_saturation([0.5, 0.97, 0.99, 1.0, 0.6])
+    assert d.use_case == "B3" and "3 consecutive" in d.evidence[0]
+
+
+def test_disk_saturation_brief_spike_ignored():
+    assert detect_disk_saturation([0.99, 0.5, 0.99, 0.5, 0.99]) is None
+
+
+def test_disk_saturation_empty():
+    assert detect_disk_saturation([]) is None
+
+
+# ---- catalogue -----------------------------------------------------------
+def test_catalogue_has_all_17_use_cases():
+    ids = [u["id"] for u in USE_CASES]
+    assert len(ids) == 17 and len(set(ids)) == 17
+
+
+def test_catalogue_detectors_exist():
+    import agents.detectors as pkg
+
+    for u in USE_CASES:
+        if u["detector"]:
+            assert callable(getattr(pkg, u["detector"])), u["id"]
+
+
+def test_catalogue_detector_names_match_use_case():
+    """Each named detector reports the use case it is listed under."""
+    import agents.detectors as pkg
+
+    samples = {
+        "detect_disk_saturation": ([1.0, 1.0, 1.0],),
+        "detect_latency_slo": (2.0,),
+        "detect_error_rate_slo": (50, 100),
+        "detect_cpu_throttling": (0.9, 1.0),
+        "detect_canary_regression": (0.5, 0.0),
+    }
+    by_name = {u["detector"]: u["id"] for u in USE_CASES}
+    for name, args in samples.items():
+        assert getattr(pkg, name)(*args).use_case == by_name[name]
+
+
+def test_end_to_end_use_cases():
+    assert {u["id"] for u in USE_CASES if u["end_to_end"]} == {"A1", "B1", "C4"}

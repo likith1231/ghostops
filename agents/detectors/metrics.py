@@ -73,3 +73,21 @@ def detect_error_rate_slo(errors: float, total: float, slo: float = 0.01, min_re
         evidence=[f"5xx rate {rate:.2%} vs SLO {slo:.2%} ({errors:.0f}/{total:.0f} requests)"],
         suggested_action="Correlate with the latest deployment; fix the regression or roll back.",
     )
+
+
+def detect_disk_saturation(io_utilisation: Sequence[float], threshold: float = 0.95, min_consecutive: int = 3) -> Detection | None:
+    """B3: disk busy (I/O time fraction) above *threshold* for several consecutive samples."""
+    run = longest = 0
+    for value in io_utilisation:
+        run = run + 1 if value >= threshold else 0
+        longest = max(longest, run)
+    if longest < min_consecutive:
+        return None
+    return Detection(
+        use_case="B3",
+        title="Disk I/O saturation",
+        severity="high",
+        confidence=0.8,
+        evidence=[f"disk at >= {threshold:.0%} utilisation for {longest} consecutive samples"],
+        suggested_action="Find the scheduled job writing at that time and move it off-peak, or make its writes async.",
+    )

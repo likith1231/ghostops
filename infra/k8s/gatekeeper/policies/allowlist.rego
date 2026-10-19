@@ -8,6 +8,7 @@ violation[{"msg": msg}] {
 
 allowed_path(path) {
     startswith(path, "sample-app/")
+    not contains(path, "..")
 }
 
 allowed_path(path) {
