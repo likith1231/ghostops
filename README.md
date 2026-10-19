@@ -49,6 +49,7 @@ graph TD
 *   **Backend & Orchestration:** Python, FastAPI, CrewAI
 *   **LLM Provider:** Claude API (`anthropic/claude-sonnet-4-6` via LiteLLM)
 *   **Continuous Deployment:** ArgoCD
+*   **Web Dashboard:** Next.js, React Three Fiber, Tailwind CSS
 
 ---
 
@@ -96,6 +97,43 @@ To run GhostOps locally, you'll need Docker, `kind`, `kubectl`, `helm`, and `pyt
 ./scripts/demo.sh ci         # scenario 2: CI test failure -> AI fix -> PR
 ./scripts/demo.sh reset      # restart the sample app between runs
 ```
+
+---
+
+## 🧪 Offline Mode (no API key)
+
+Set `GHOSTOPS_MOCK_LLM=1` and the Diagnostic Reasoner and Patch Generator are replaced by
+deterministic rules (`agents/mock_llm.py`). Every patch still goes through the **real** OPA policy
+check and Docker sandbox, so the demo, dashboard and tests all work without Claude credits.
+Mock runs never open a PR unless `GHOSTOPS_MOCK_CREATE_PR=1` is also set.
+
+```bash
+GHOSTOPS_MOCK_LLM=1 python -m agents.crew a1   # or b1, c4
+GHOSTOPS_MOCK_LLM=1 uvicorn backend.main:app --port 8000
+```
+
+`GHOSTOPS_DB_PATH` points the knowledge base somewhere other than `agents/data/incidents.db`.
+
+## 🌐 Web Dashboard
+
+`web/` is a Next.js + React Three Fiber site. It lets you trigger incidents and watch them
+being fixed live in 3D, and also has the detector lab, the use-case catalogue and the
+knowledge base. See [`web/README.md`](web/README.md).
+
+### API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/status` | Whether mock mode is on and whether a pipeline is running |
+| `GET /api/scenarios` · `POST /api/simulate` | List demo scenarios / start one in the background |
+| `GET /api/runs` · `/api/runs/{id}` · `/api/runs/{id}/events` | Follow a run (polling or Server-Sent Events) |
+| `POST /api/detect` · `GET /api/usecases` | Run the deterministic detectors / the 17-use-case catalogue |
+| `GET /api/incidents/summary` · `/recent` · `/timeseries` · `/{id}` | Knowledge-base reads |
+
+### Use-case coverage
+
+16 of the 17 catalogued use cases have a deterministic detector (`agents/detectors/`). A1, B1 and C4
+work end to end (diagnose → patch → sandbox → PR), and C1 has a `rollback_deployment()` action.
 
 ---
 
