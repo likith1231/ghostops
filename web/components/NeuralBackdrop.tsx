@@ -43,12 +43,13 @@ interface Pulse {
   color: string;
   hops: number; // how many more edges this signal may continue along
   route?: number[]; // fixed path (incident pulses)
+  final?: string; // colour the last node lights when a route completes
 }
 
 /**
  * The page background: GhostOps drawn as a living network. Named nodes are the real
- * components; signals pass node to node like neural activity, an incident periodically
- * runs the pipeline red and arrives green, and the cursor links to nearby nodes.
+ * components; signals pass node to node like neural activity, a real incident runs the
+ * pipeline path red and a validated fix runs it green, and the cursor links to nearby nodes.
  */
 export default function NeuralBackdrop() {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -69,7 +70,15 @@ export default function NeuralBackdrop() {
     const mouse = { x: -9999, y: -9999 };
     let frame = 0;
     let lastSpawn = 0;
-    let lastIncident = 0;
+    // Pipeline runs requested by real activity: red when an incident starts, green when healed.
+    const routes: { color: string; final: string }[] = [];
+    const onActivity = (e: Event) => {
+      const { prev, next } = (e as CustomEvent<{ prev: { state: string; run_id?: string }; next: { state: string; run_id?: string } }>).detail;
+      const started = (next.state === "preparing" || next.state === "incident") && (prev.state === "idle" || prev.run_id !== next.run_id || prev.state === "healed" || prev.state === "failed");
+      if (started) routes.push({ color: RED, final: RED });
+      if (next.state === "healed" && prev.state !== "healed") routes.push({ color: GREEN, final: GREEN });
+    };
+    window.addEventListener("ghostops:activity", onActivity);
 
     const build = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -134,14 +143,14 @@ export default function NeuralBackdrop() {
           });
         }
       }
-      // Every ~7s an incident runs the pipeline: red until it reaches github, which lights green.
-      if (now - lastIncident > 7000) {
-        lastIncident = now;
+      // A real incident (or fix) runs the pipeline path through the components.
+      const request = routes.shift();
+      if (request) {
         const route = PIPELINE.map(byLabel).filter((i) => i >= 0);
         if (route.length > 1) {
           nodes[route[0]].flash = 1;
-          nodes[route[0]].flashColor = RED;
-          pulses.push({ from: route[0], to: route[1], t: 0, speed: 1.1, color: RED, hops: 0, route: route.slice(1) });
+          nodes[route[0]].flashColor = request.color;
+          pulses.push({ from: route[0], to: route[1], t: 0, speed: 1.1, color: request.color, final: request.final, hops: 0, route: route.slice(1) });
         }
       }
     };
@@ -218,8 +227,8 @@ export default function NeuralBackdrop() {
           const rest = p.route.slice(1);
           const done = rest.length === 0;
           arrived.flash = 1;
-          arrived.flashColor = done ? GREEN : RED;
-          if (!done) pulses.push({ ...p, from: p.to, to: rest[0], t: 0, route: rest, color: rest.length === 1 ? GREEN : RED });
+          arrived.flashColor = done ? p.final ?? p.color : p.color;
+          if (!done) pulses.push({ ...p, from: p.to, to: rest[0], t: 0, route: rest });
         } else {
           arrived.flash = Math.max(arrived.flash, 0.6);
           arrived.flashColor = p.color;
@@ -288,6 +297,7 @@ export default function NeuralBackdrop() {
       window.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerleave", onLeave);
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("ghostops:activity", onActivity);
     };
   }, []);
 

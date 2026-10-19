@@ -4,15 +4,20 @@ import { Billboard } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
-import { healState, type HealStage } from "@/lib/healCycle";
+import { activity } from "@/lib/activity";
+import type { ActivityState } from "@/lib/api";
 
-// JARVIS blue at rest, Ultron red during an incident, a green flash once healed.
-const STAGE_COLOR: Record<HealStage, THREE.Color> = {
+// Driven by what GhostOps is really doing: JARVIS blue at rest, Ultron red during a real
+// incident, amber while diagnosing, green once a fix is validated.
+const STAGE_COLOR: Record<ActivityState, THREE.Color> = {
+  idle: new THREE.Color("#38d9ff"),
+  preparing: new THREE.Color("#ff7a3d"),
   incident: new THREE.Color("#ff2d3d"),
   diagnosing: new THREE.Color("#ff9f1c"),
   patching: new THREE.Color("#38d9ff"),
+  validating: new THREE.Color("#7c9cff"),
   healed: new THREE.Color("#2ee88a"),
-  steady: new THREE.Color("#38d9ff"),
+  failed: new THREE.Color("#ff2d3d"),
 };
 const DEEP = new THREE.Color("#1a8cff");
 const now = () => performance.now() / 1000;
@@ -317,8 +322,8 @@ function Hologram() {
   useFrame(({ pointer }, delta) => {
     const g = group.current;
     if (!g) return;
-    const { stage } = healState(now());
-    accent.lerp(STAGE_COLOR[stage], 1 - Math.exp(-delta * 5));
+    const state = activity.current.state;
+    accent.lerp(STAGE_COLOR[state], 1 - Math.exp(-delta * 5));
     accentSoft.copy(accent).lerp(DEEP, 0.45);
     // Hologram flicker: rare, brief dips in brightness.
     flicker.current = Math.random() < 0.015 ? 0.55 : THREE.MathUtils.damp(flicker.current, 1, 12, delta);

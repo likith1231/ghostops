@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,7 @@ SAMPLE_APP_TESTS: str = os.getenv(
 )
 POD_LOG_LINES: int = int(os.getenv("POD_LOG_LINES", "20"))
 POD_NAMESPACE: str = os.getenv("POD_NAMESPACE", "default")
+MEMORY_HISTORY_S: int = int(os.getenv("MEMORY_HISTORY_S", "300"))
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -227,6 +229,24 @@ def _query_prometheus_memory(pod_name: str) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             logger.error("Prometheus query error for %s: %s", metric_name, exc)
 
+    # The last few minutes of the working set, so the growth itself is evidence
+    # (an instant query is a single point). Falls back to the instant value.
+    try:
+        now = time.time()
+        resp = requests.get(
+            f"{PROMETHEUS_URL}/api/v1/query_range",
+            params={"query": query_working_set, "start": now - MEMORY_HISTORY_S, "end": now, "step": 15},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        series = resp.json().get("data", {}).get("result", [])
+        if series:
+            values = [{"ts": str(ts), "value": float(v)} for ts, v in series[0].get("values", [])]
+            if len(values) > 1:
+                metrics["container_memory_working_set_bytes"] = values
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Prometheus range query failed, keeping the instant value: %s", exc)
+
     return metrics
 
 
@@ -258,7 +278,9 @@ def _read_source_file(path: str) -> dict[str, str]:
 # Pipeline runner (background)
 # ---------------------------------------------------------------------------
 # One incident at a time (shared with /api/simulate): the deployer switches git branches to open the PR.
+from backend import live  # noqa: E402
 from backend.runs import pipeline_lock as _pipeline_lock  # noqa: E402
+from backend.runs import store as run_store  # noqa: E402
 
 
 def _process_alert(alert: dict[str, Any]) -> None:
@@ -312,9 +334,23 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         len(source_files),
     )
 
-    # ---- Step D: Run the agent pipeline ----------------------------
+    # ---- Step D: Run the agent pipeline, as a run the dashboard follows ----
+    # A live run started from the dashboard is waiting for exactly this alert;
+    # otherwise (Chaos Mesh, the demo script, a real leak) the alert gets its own run.
+    run_id = live.claim_waiting_run() or run_store.create(
+        "live", f"Live alert: {alert.get('labels', {}).get('alertname', 'alert')} on {pod_name or 'cluster'}"
+    )["id"]
+    run_store.set_context(
+        run_id,
+        {"alert_type": failure_context["alert_type"], "metrics": metrics, "logs": logs[-20:]},
+    )
     try:
-        pipeline_result = run_pipeline(failure_context)
+        pipeline_result = run_pipeline(
+            failure_context,
+            on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data),
+        )
+        passed = pipeline_result.get("validation_result", {}).get("passed") is True
+        run_store.finish(run_id, "passed" if passed else "failed", result=pipeline_result)
 
         # ---- Step E: Log the result clearly ------------------------
         logger.info("=" * 72)
@@ -343,14 +379,7 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
             clean_error = "API Quota Exhausted / Rate Limited"
         else:
             clean_error = f"Pipeline Execution Failed: {err_str}"
-
-        pipeline_result = {
-            "error": clean_error,
-            "diagnosis": {"root_cause": "Pipeline failed: " + clean_error},
-            "patch": {"diff": "", "explanation": "No patch generated due to failure"},
-            "validation_result": {"passed": False, "reason": "Pipeline did not complete"},
-            "pr_result": {"pr_created": False, "reason": "pipeline_failed"},
-        }
+        run_store.finish(run_id, "error", error=clean_error)
 
 
 # ---------------------------------------------------------------------------

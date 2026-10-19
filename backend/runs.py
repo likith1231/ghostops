@@ -52,6 +52,7 @@ class RunStore:
             "result": None,
             "error": None,
             "context": None,
+            "live": None,
         }
         with self._lock:
             self._runs[run["id"]] = run
@@ -82,6 +83,21 @@ class RunStore:
                 return
             run["context"] = copy.deepcopy(context)
             self._touch(run)
+
+    def set_live(self, run_id: str, live: dict) -> None:
+        """Progress of a live cluster incident before the pipeline starts (leak, alert)."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None or run["status"] in TERMINAL:
+                return
+            run["live"] = copy.deepcopy(live)
+            self._touch(run)
+
+    def latest(self) -> dict[str, Any] | None:
+        with self._lock:
+            if not self._runs:
+                return None
+            return copy.deepcopy(next(reversed(self._runs.values())))
 
     def finish(self, run_id: str, status: str, result: dict | None = None, error: str | None = None) -> None:
         if status not in TERMINAL:

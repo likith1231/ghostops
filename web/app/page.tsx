@@ -14,6 +14,7 @@ import Section from "@/components/Section";
 import Stats from "@/components/Stats";
 import Ticker from "@/components/Ticker";
 import UseCases from "@/components/UseCases";
+import { useActivityFeed } from "@/lib/activity";
 import { useBackend } from "@/lib/useBackend";
 
 const AiCore = dynamic(() => import("@/components/three/AiCore"), { ssr: false });
@@ -27,6 +28,7 @@ const HERO_FACTS = [
 
 export default function Home() {
   const backend = useBackend();
+  useActivityFeed();
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 

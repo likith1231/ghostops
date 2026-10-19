@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from agents.config import MOCK_LLM
 from agents.crew import run_pipeline
 from agents.scenarios import SCENARIOS
+from backend import live
 from backend.runs import TERMINAL, pipeline_lock, store
 
 router = APIRouter(prefix="/api", tags=["runs"])
@@ -79,6 +81,59 @@ async def simulate(body: SimulateRequest) -> dict:
         pipeline_lock.release()
         raise
     return {"run_id": run["id"], "mock_llm": MOCK_LLM}
+
+
+@router.get("/live/status")
+def live_status() -> dict:
+    """Whether a live cluster incident can be started (sample-app pod and Prometheus reachable)."""
+    try:
+        pod = live._pod_name()
+        alert = live.alert_state()
+        return {"ready": True, "pod": pod, "alert": alert, "busy": live.live_lock.locked()}
+    except Exception as exc:  # noqa: BLE001
+        return {"ready": False, "error": str(exc), "busy": live.live_lock.locked()}
+
+
+@router.post("/live/leak", status_code=202)
+async def live_leak() -> dict:
+    """Leak memory in the real sample-app and follow the real alert into the pipeline."""
+    if pipeline_lock.locked():
+        raise HTTPException(status_code=409, detail="a pipeline is already running")
+    if not live.live_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a live incident is already in progress")
+    try:
+        run = store.create("live", "Live cluster: memory leak in sample-app")
+        threading.Thread(target=live.run_live_leak, args=(run["id"],), daemon=True).start()
+    except Exception:
+        live.live_lock.release()
+        raise
+    return {"run_id": run["id"]}
+
+
+ACTIVITY_LINGER_S = 10
+STAGE_ACTIVITY = {"diagnosis": "diagnosing", "patch": "patching", "validation": "validating", "deploy": "validating"}
+
+
+@router.get("/activity")
+async def activity() -> dict:
+    """What GhostOps is doing right now, for the hero hologram and the background."""
+    run = store.latest()
+    if run is None:
+        return {"state": "idle"}
+    base = {"run_id": run["id"], "title": run["title"], "status": run["status"]}
+    if run["status"] == "running":
+        running = next((s for s, v in run["stages"].items() if v["status"] == "running"), None)
+        started = any(v["status"] != "pending" for v in run["stages"].values())
+        if running:
+            return {**base, "state": STAGE_ACTIVITY[running]}
+        live_step = (run.get("live") or {}).get("step")
+        if not started and live_step in (None, "starting", "resetting", "leaking"):
+            return {**base, "state": "preparing"}
+        return {**base, "state": "incident"}
+    age = (datetime.now(timezone.utc) - datetime.fromisoformat(run["updated_at"])).total_seconds()
+    if age < ACTIVITY_LINGER_S:
+        return {**base, "state": "healed" if run["status"] == "passed" else "failed"}
+    return {**base, "state": "idle"}
 
 
 @router.get("/runs")
