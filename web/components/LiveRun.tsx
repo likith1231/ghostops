@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, streamRun, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
+import { STAGES, api, streamRun, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
 import type { BackendState } from "@/lib/useBackend";
 import CodeDiff from "./CodeDiff";
 import MemoryChart from "./MemoryChart";
@@ -13,6 +13,9 @@ const PipelineScene = dynamic(() => import("./three/PipelineScene"), {
   ssr: false,
   loading: () => <div className="grid h-full place-items-center font-mono text-xs text-mist">loading scene…</div>,
 });
+
+/** Minimum time each pipeline step stays on screen. */
+const STEP_MS = 850;
 
 const STAGE_TO_NODE: Record<string, NodeState> = { pending: "idle", running: "running", done: "done", error: "error" };
 
@@ -65,28 +68,64 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     api.scenarios().then(setScenarios).catch(() => setScenarios([]));
   }, [backend.online]);
 
-  const cleanup = useCallback(() => {
+  // Incoming run versions are queued and shown one at a time, each for at least
+  // STEP_MS, so stages that finish in milliseconds (mock mode) are still seen in order.
+  const queue = useRef<Run[]>([]);
+  const lastVersion = useRef(-1);
+  const pacer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shown = useRef<Run | null>(null);
+
+  const stopStream = useCallback(() => {
     stop.current?.();
     if (poll.current) clearInterval(poll.current);
     stop.current = null;
     poll.current = null;
   }, []);
+
+  const cleanup = useCallback(() => {
+    stopStream();
+    if (pacer.current) clearTimeout(pacer.current);
+    pacer.current = null;
+    queue.current = [];
+    lastVersion.current = -1;
+  }, [stopStream]);
   useEffect(() => cleanup, [cleanup]);
+
+  const pump = useCallback(() => {
+    if (pacer.current) return;
+    const next = queue.current.shift();
+    if (!next) return;
+    const prev = shown.current;
+    shown.current = next;
+    setRun(next);
+    if (next.status !== "running") {
+      stopStream();
+      onFinished();
+      return;
+    }
+    // Only a visible stage change earns screen time; other updates (telemetry) pass straight through.
+    const changed = !prev || STAGES.some((s) => prev.stages[s].status !== next.stages[s].status);
+    pacer.current = setTimeout(() => {
+      pacer.current = null;
+      pump();
+    }, changed ? STEP_MS : 0);
+  }, [onFinished, stopStream]);
 
   const update = useCallback(
     (r: Run) => {
-      setRun(r);
-      if (r.status !== "running") {
-        cleanup();
-        onFinished();
-      }
+      if (r.version <= lastVersion.current) return; // polling can repeat versions
+      lastVersion.current = r.version;
+      queue.current.push(r);
+      pump();
     },
-    [cleanup, onFinished],
+    [pump],
   );
 
   const trigger = useCallback(async (scenario: string) => {
     setError(null);
     cleanup();
+    shown.current = null;
+    setRun(null); // clear the previous run at once instead of leaving its result on screen
     try {
       const { run_id } = await api.simulate(scenario);
       // SSE first; if the stream drops, fall back to polling.

@@ -177,7 +177,8 @@ def test_events_stream_follows_live_run():
     store.finish(run["id"], "failed", result=RESULT_FAIL)
     with client.stream("GET", f"/api/runs/{run['id']}/events") as response:
         lines = [line for line in response.iter_lines() if line.startswith("data: ")]
-    assert len(lines) == 1 and json.loads(lines[0][6:])["status"] == "failed"
+    statuses = [json.loads(line[6:])["status"] for line in lines]
+    assert statuses == ["running", "failed"]
 
 
 def test_store_set_context_bumps_version():
@@ -196,3 +197,34 @@ def test_simulated_run_exposes_telemetry_but_not_source():
     assert run["context"]["metrics"] == {"mem": [{"value": 5}]}
     assert len(run["context"]["logs"]) == 20
     assert "source_files" not in run["context"]
+
+
+def test_store_history_keeps_every_version():
+    s = RunStore()
+    run = s.create("c4", "CI")
+    s.update_stage(run["id"], "diagnosis", "running")
+    s.update_stage(run["id"], "diagnosis", "done")
+    assert [r["version"] for r in s.history(run["id"])] == [0, 1, 2]
+    assert [r["version"] for r in s.history(run["id"], since=2)] == [2]
+
+
+def test_store_history_dropped_with_evicted_run():
+    s = RunStore(max_runs=1)
+    first = s.create("a", "A")
+    s.create("b", "B")
+    assert s.history(first["id"]) == []
+
+
+def test_events_stream_sends_every_stage_in_order():
+    """Fast stages must not be skipped: each running/done transition is streamed."""
+    with patch("backend.routers.runs.run_pipeline", side_effect=_fake_pipeline(RESULT_PASS)):
+        run_id = client.post("/api/simulate", json={"scenario": "c4"}).json()["run_id"]
+        _wait_for_end(run_id)
+    with client.stream("GET", f"/api/runs/{run_id}/events") as response:
+        runs = [json.loads(line[6:]) for line in response.iter_lines() if line.startswith("data: ")]
+    versions = [r["version"] for r in runs]
+    assert versions == list(range(len(runs)))
+    seen = [(st, r["stages"][st]["status"]) for r in runs for st in ("diagnosis", "patch", "validation", "deploy")]
+    for stage in ("diagnosis", "patch", "validation", "deploy"):
+        assert (stage, "running") in seen, stage
+    assert runs[-1]["status"] == "passed"

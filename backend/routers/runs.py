@@ -95,16 +95,17 @@ async def get_run(run_id: str) -> dict:
 
 
 async def _run_events(run_id: str) -> AsyncIterator[str]:
-    last_version = -1
+    """Send every version of the run in order, so no stage is ever skipped."""
+    sent = 0
     while True:
-        run = store.get(run_id)
-        if run is None:
+        versions = store.history(run_id, since=sent)
+        if not versions and store.get(run_id) is None:
             return
-        if run["version"] != last_version:
-            last_version = run["version"]
+        for run in versions:
+            sent += 1
             yield f"data: {json.dumps(run)}\n\n"
-        if run["status"] in TERMINAL:
-            return
+            if run["status"] in TERMINAL:
+                return
         await asyncio.sleep(SSE_POLL_SECONDS)
 
 
