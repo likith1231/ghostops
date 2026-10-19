@@ -52,6 +52,8 @@ export interface Run {
   stages: Record<StageName, { status: StageStatus; data: Record<string, unknown> }>;
   result: { diagnosis: Diagnosis; patch: Patch; validation_result: Validation; pr_result: PrResult } | null;
   error: string | null;
+  /** What the pipeline was given: telemetry only, never source files. */
+  context: { alert_type?: string; metrics?: Record<string, { ts?: string; value: number }[]>; logs?: string[] } | null;
 }
 
 export interface Status {

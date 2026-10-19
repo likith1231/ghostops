@@ -1,5 +1,6 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { api, type UseCase } from "@/lib/api";
 
@@ -80,7 +81,17 @@ export default function UseCases({ online }: { online: boolean | null }) {
       </div>
       {all.length ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {shown.map((uc) => <TiltCard key={uc.id} uc={uc} />)}
+          {shown.map((uc, i) => (
+            <motion.div
+              key={`${filter}-${uc.id}`}
+              initial={{ opacity: 0, y: 24, scale: 0.97 }}
+              whileInView={{ opacity: 1, y: 0, scale: 1 }}
+              viewport={{ once: true, margin: "-40px" }}
+              transition={{ duration: 0.45, delay: (i % 8) * 0.05, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <TiltCard uc={uc} />
+            </motion.div>
+          ))}
         </div>
       ) : (
         <p className="text-sm text-mist">Start the backend to load the use-case catalogue.</p>

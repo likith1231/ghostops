@@ -68,17 +68,6 @@ body {
   to { transform: translate(10vw, -12vh) scale(1.15); }
 }
 
-/* A faint hexagon lattice, strongest at the top of the screen. */
-.hexgrid {
-  position: absolute;
-  inset: 0;
-  opacity: 0.5;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'><path d='M28 0 L56 16.2 L56 48.5 L28 64.7 L0 48.5 L0 16.2 Z M28 64.7 L28 97' fill='none' stroke='%2338d9ff' stroke-opacity='0.07' stroke-width='1'/></svg>");
-  background-size: 56px 97px;
-  mask-image: radial-gradient(ellipse 90% 70% at 70% 20%, black 10%, transparent 70%);
-  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 70% 20%, black 10%, transparent 70%);
-}
-
 /* Film grain keeps the large gradients from banding. */
 .grain {
   position: absolute;
@@ -147,6 +136,6 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .glow { animation: none; }
+  .glow, .ticker-track, .shimmer::after { animation: none; }
   .pulse-ring { animation: none; }
 }

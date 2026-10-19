@@ -178,3 +178,21 @@ def test_events_stream_follows_live_run():
     with client.stream("GET", f"/api/runs/{run['id']}/events") as response:
         lines = [line for line in response.iter_lines() if line.startswith("data: ")]
     assert len(lines) == 1 and json.loads(lines[0][6:])["status"] == "failed"
+
+
+def test_store_set_context_bumps_version():
+    s = RunStore()
+    run = s.create("b1", "Leak")
+    s.set_context(run["id"], {"metrics": {"m": [{"value": 1}]}})
+    got = s.get(run["id"])
+    assert got["context"] == {"metrics": {"m": [{"value": 1}]}} and got["version"] == 1
+
+
+def test_simulated_run_exposes_telemetry_but_not_source():
+    ctx = {"alert_type": "memory_high", "metrics": {"mem": [{"value": 5}]}, "logs": ["a"] * 30, "source_files": {"x.py": "secret"}}
+    with patch("backend.routers.runs.SCENARIOS", {"c4": ("CI", lambda: ctx)}), \
+         patch("backend.routers.runs.run_pipeline", side_effect=_fake_pipeline(RESULT_PASS)):
+        run = _wait_for_end(client.post("/api/simulate", json={"scenario": "c4"}).json()["run_id"])
+    assert run["context"]["metrics"] == {"mem": [{"value": 5}]}
+    assert len(run["context"]["logs"]) == 20
+    assert "source_files" not in run["context"]

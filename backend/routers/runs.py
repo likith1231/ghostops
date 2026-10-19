@@ -42,8 +42,18 @@ def _execute(run_id: str, scenario: str) -> None:
     """Run one scenario through the pipeline; always releases the pipeline lock."""
     try:
         _, build_context = SCENARIOS[scenario]
+        context = build_context()
+        # Source files stay server-side; the dashboard only needs the telemetry.
+        store.set_context(
+            run_id,
+            {
+                "alert_type": context.get("alert_type"),
+                "metrics": context.get("metrics", {}),
+                "logs": list(context.get("logs", []))[-20:],
+            },
+        )
         result = run_pipeline(
-            build_context(),
+            context,
             on_stage=lambda stage, state, data: store.update_stage(run_id, stage, state, data),
         )
         passed = result.get("validation_result", {}).get("passed") is True

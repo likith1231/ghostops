@@ -48,6 +48,7 @@ class RunStore:
             "stages": {s: {"status": "pending", "data": {}} for s in STAGES},
             "result": None,
             "error": None,
+            "context": None,
         }
         with self._lock:
             self._runs[run["id"]] = run
@@ -65,6 +66,15 @@ class RunStore:
             if run is None or stage not in run["stages"]:
                 return
             run["stages"][stage] = {"status": status, "data": copy.deepcopy(data or {})}
+            self._touch(run)
+
+    def set_context(self, run_id: str, context: dict) -> None:
+        """Attach what the pipeline was given (alert type, metrics, log tail) for the dashboard."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                return
+            run["context"] = copy.deepcopy(context)
             self._touch(run)
 
     def finish(self, run_id: str, status: str, result: dict | None = None, error: str | None = None) -> None:

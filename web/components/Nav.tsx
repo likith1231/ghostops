@@ -1,6 +1,7 @@
 "use client";
 
 import type { BackendState } from "@/lib/useBackend";
+import { openPalette } from "./CommandPalette";
 
 const LINKS = [
   ["Live", "#pipeline"],
@@ -43,7 +44,17 @@ export default function Nav({ backend }: { backend: BackendState }) {
             </a>
           ))}
         </div>
-        <BackendPill backend={backend} />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openPalette}
+            className="hidden items-center gap-1.5 rounded-lg border border-arc/20 bg-arc/5 px-2.5 py-1 font-mono text-[11px] text-mist transition hover:text-white sm:flex"
+            aria-label="Open command palette"
+          >
+            <kbd>Ctrl</kbd>
+            <kbd>K</kbd>
+          </button>
+          <BackendPill backend={backend} />
+        </div>
       </nav>
     </header>
   );

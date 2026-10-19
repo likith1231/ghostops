@@ -4,7 +4,8 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, streamRun, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
 import type { BackendState } from "@/lib/useBackend";
-import DiffView from "./DiffView";
+import CodeDiff from "./CodeDiff";
+import MemoryChart from "./MemoryChart";
 import OfflineNotice from "./OfflineNotice";
 import type { NodeState } from "./three/PipelineScene";
 
@@ -83,11 +84,11 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     [cleanup, onFinished],
   );
 
-  const trigger = async () => {
+  const trigger = useCallback(async (scenario: string) => {
     setError(null);
     cleanup();
     try {
-      const { run_id } = await api.simulate(selected);
+      const { run_id } = await api.simulate(scenario);
       // SSE first; if the stream drops, fall back to polling.
       stop.current = streamRun(run_id, update, () => {
         poll.current = setInterval(() => api.run(run_id).then(update).catch(() => undefined), 1000);
@@ -95,7 +96,19 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, [cleanup, update]);
+
+  // The command palette can start a scenario from anywhere on the page.
+  useEffect(() => {
+    const onTrigger = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      setSelected(id);
+      document.querySelector("#pipeline")?.scrollIntoView({ behavior: "smooth" });
+      trigger(id);
+    };
+    window.addEventListener("ghostops:trigger", onTrigger);
+    return () => window.removeEventListener("ghostops:trigger", onTrigger);
+  }, [trigger]);
 
   const states = nodeStates(run);
   // Our own run's state is live; the polled busy flag only matters for runs started elsewhere.
@@ -128,7 +141,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
             </button>
           ))}
           <button
-            onClick={trigger}
+            onClick={() => trigger(selected)}
             disabled={!backend.online || !!busy}
             className="ml-auto rounded-full bg-arc px-4 py-2 text-sm font-semibold text-void shadow-[0_0_30px_rgba(56,217,255,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -152,6 +165,14 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
 
       {backend.online === false && <OfflineNotice />}
       {error && <div className="rounded-xl border border-bad/30 bg-bad/10 p-3 text-sm text-bad">{error}</div>}
+
+      {run?.context?.metrics && (
+        <MemoryChart
+          key={run.id}
+          metrics={run.context.metrics}
+          fixed={v?.status === "done" ? validation?.passed === true : null}
+        />
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="1 · Diagnosis" state={d?.status ?? "pending"}>
@@ -178,7 +199,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
             <>
               {patch.file_path && <div className="font-mono text-xs text-arc">{patch.file_path}</div>}
               <p>{patch.explanation}</p>
-              <DiffView diff={patch.diff ?? ""} maxHeight="12rem" />
+              <CodeDiff diff={patch.diff ?? ""} maxHeight="12rem" />
             </>
           ) : (
             <Placeholder />

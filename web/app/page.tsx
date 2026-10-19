@@ -1,8 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useScroll, useTransform } from "framer-motion";
 import dynamic from "next/dynamic";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import Backdrop from "@/components/Backdrop";
+import CommandPalette from "@/components/CommandPalette";
 import DetectorLab from "@/components/DetectorLab";
 import HowItWorks from "@/components/HowItWorks";
 import Incidents from "@/components/Incidents";
@@ -10,6 +12,7 @@ import LiveRun from "@/components/LiveRun";
 import Nav from "@/components/Nav";
 import Section from "@/components/Section";
 import Stats from "@/components/Stats";
+import Ticker from "@/components/Ticker";
 import UseCases from "@/components/UseCases";
 import { useBackend } from "@/lib/useBackend";
 
@@ -27,23 +30,26 @@ export default function Home() {
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  // Scrolling out of the hero: the hologram drifts up and fades, the headline lifts a little.
+  const hero = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({ target: hero, offset: ["start start", "end start"] });
+  const coreY = useTransform(scrollYProgress, [0, 1], [0, -160]);
+  const coreScale = useTransform(scrollYProgress, [0, 1], [1, 0.82]);
+  const coreOpacity = useTransform(scrollYProgress, [0, 0.85], [1, 0]);
+  const textY = useTransform(scrollYProgress, [0, 1], [0, -70]);
+
   return (
     <main id="top" className="relative">
       {/* Nav sits outside the isolated content so nothing inside can paint over it. */}
       <Nav backend={backend} />
+      <CommandPalette />
 
-      {/* Page backdrop: slow colour glows, a faint hex grid and film grain, all CSS. */}
-      <div aria-hidden className="backdrop pointer-events-none fixed inset-0 z-0">
-        <div className="glow glow-a" />
-        <div className="glow glow-b" />
-        <div className="hexgrid" />
-        <div className="grain" />
-      </div>
+      <Backdrop />
 
       <div className="relative isolate z-10">
         {/* Hero: headline left, the AI core with its HUD right (below on phones). */}
-        <section className="relative grid min-h-[100svh] w-full items-center gap-6 px-4 pb-16 pt-28 sm:px-8 lg:px-[max(2rem,calc((100vw_-_80rem)/2_+_2rem))] lg:pb-10">
-          <div className="relative z-10 max-w-2xl lg:max-w-[46%]">
+        <section ref={hero} className="relative grid min-h-[100svh] w-full items-center gap-6 px-4 pb-16 pt-28 sm:px-8 lg:px-[max(2rem,calc((100vw_-_80rem)/2_+_2rem))] lg:pb-10">
+          <motion.div style={{ y: textY }} className="relative z-10 max-w-2xl lg:max-w-[46%]">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
@@ -65,7 +71,7 @@ export default function Home() {
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
                   href="#pipeline"
-                  className="cut-corners bg-arc px-6 py-3 font-semibold text-void shadow-[0_0_40px_rgba(56,217,255,0.45)] transition hover:brightness-110"
+                  className="cut-corners shimmer bg-arc px-6 py-3 font-semibold text-void shadow-[0_0_40px_rgba(56,217,255,0.45)] transition hover:brightness-110"
                 >
                   Trigger a live incident
                 </a>
@@ -92,7 +98,7 @@ export default function Home() {
                 </div>
               ))}
             </motion.dl>
-          </div>
+          </motion.div>
 
           {/* The hologram: full-bleed behind the hero on desktop, its own square below the text on phones. */}
           <motion.div
@@ -101,9 +107,13 @@ export default function Home() {
             transition={{ duration: 1.4, delay: 0.2 }}
             className="relative mx-auto aspect-square w-full max-w-[480px] lg:absolute lg:inset-0 lg:z-0 lg:aspect-auto lg:max-w-none"
           >
-            <AiCore />
+            <motion.div style={{ y: coreY, scale: coreScale, opacity: coreOpacity }} className="h-full w-full">
+              <AiCore />
+            </motion.div>
           </motion.div>
         </section>
+
+        <Ticker refreshKey={refreshKey} />
 
         <div className="relative">
 
