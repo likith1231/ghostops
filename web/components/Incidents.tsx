@@ -44,7 +44,7 @@ export default function Incidents({ refreshKey }: { refreshKey: number }) {
             <div className="space-y-3 px-5 pb-5">
               <p className="text-sm text-white/80">{open.outcome_summary}</p>
               {open.pr_url && (
-                <a href={open.pr_url} target="_blank" rel="noreferrer" className="text-sm text-ghost hover:underline">
+                <a href={open.pr_url} target="_blank" rel="noreferrer" className="text-sm text-arc hover:underline">
                   {open.pr_url}
                 </a>
               )}

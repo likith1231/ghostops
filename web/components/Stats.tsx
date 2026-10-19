@@ -76,7 +76,7 @@ export default function Stats({ refreshKey }: { refreshKey: number }) {
   return (
     <div className="grid gap-4 lg:grid-cols-3">
       <div className="grid grid-cols-2 gap-4 lg:col-span-2">
-        <Kpi label="Incidents handled" value={s.total} hint="every run is logged, pass or fail" accent="bg-ghost" />
+        <Kpi label="Incidents handled" value={s.total} hint="every run is logged, pass or fail" accent="bg-arc" />
         <Kpi label="Validation pass rate" value={s.pass_rate} decimals={1} suffix="%" hint="OPA policy + sandboxed tests" accent="bg-ok" />
         <Kpi label="Pull requests" value={s.prs_created} hint="opened for human review" accent="bg-violet" />
         <Kpi label="Blocked by gates" value={s.failed} hint="bad patches that never reached anyone" accent="bg-bad" />

@@ -35,7 +35,7 @@ function seconds(run: Run): string {
 
 function Card({ title, state, children }: { title: string; state: string; children: React.ReactNode }) {
   const tone =
-    state === "running" ? "text-ghost" : state === "done" ? "text-ok" : state === "error" ? "text-bad" : "text-mist";
+    state === "running" ? "text-arc" : state === "done" ? "text-ok" : state === "error" ? "text-bad" : "text-mist";
   return (
     <div className="glass min-w-0 rounded-2xl p-5">
       <div className="mb-3 flex items-center justify-between">
@@ -119,18 +119,18 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
               onClick={() => setSelected(s.id)}
               className={`rounded-full border px-3 py-1.5 text-xs transition ${
                 selected === s.id
-                  ? "border-ghost/60 bg-ghost/15 text-white"
+                  ? "border-arc/60 bg-arc/15 text-white"
                   : "border-white/10 bg-black/30 text-mist hover:text-white"
               }`}
             >
-              <span className="mr-1.5 font-mono text-ghost">{s.id.toUpperCase()}</span>
+              <span className="mr-1.5 font-mono text-arc">{s.id.toUpperCase()}</span>
               {s.title.replace("->", "→")}
             </button>
           ))}
           <button
             onClick={trigger}
             disabled={!backend.online || !!busy}
-            className="ml-auto rounded-full bg-ghost px-4 py-2 text-sm font-semibold text-void shadow-[0_0_30px_rgba(124,247,228,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            className="ml-auto rounded-full bg-arc px-4 py-2 text-sm font-semibold text-void shadow-[0_0_30px_rgba(56,217,255,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? "Pipeline running…" : "Trigger incident"}
           </button>
@@ -176,7 +176,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
         <Card title="2 · Patch" state={p?.status ?? "pending"}>
           {patch?.diff !== undefined ? (
             <>
-              {patch.file_path && <div className="font-mono text-xs text-ghost">{patch.file_path}</div>}
+              {patch.file_path && <div className="font-mono text-xs text-arc">{patch.file_path}</div>}
               <p>{patch.explanation}</p>
               <DiffView diff={patch.diff ?? ""} maxHeight="12rem" />
             </>
@@ -214,7 +214,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
         <Card title="4 · Pull request" state={dep?.status ?? "pending"}>
           {pr?.reason || pr?.pr_created ? (
             pr.pr_created ? (
-              <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-ghost underline-offset-4 hover:underline">
+              <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-arc underline-offset-4 hover:underline">
                 {pr.pr_url}
               </a>
             ) : pr.reason === "mock_mode" ? (

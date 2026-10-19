@@ -10,7 +10,7 @@ export type NodeState = "idle" | "running" | "done" | "error" | "held";
 
 export const NODE_COLORS: Record<NodeState, string> = {
   idle: "#2b3354",
-  running: "#7cf7e4",
+  running: "#38d9ff",
   done: "#4ade80",
   error: "#fb7185",
   held: "#fbbf24",

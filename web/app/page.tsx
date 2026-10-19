@@ -13,7 +13,7 @@ import Stats from "@/components/Stats";
 import UseCases from "@/components/UseCases";
 import { useBackend } from "@/lib/useBackend";
 
-const HeroScene = dynamic(() => import("@/components/three/HeroScene"), { ssr: false });
+const AiCore = dynamic(() => import("@/components/three/AiCore"), { ssr: false });
 
 const HERO_FACTS = [
   ["17", "catalogued failure types"],
@@ -32,23 +32,25 @@ export default function Home() {
       {/* Nav sits outside the isolated content so nothing inside can paint over it. */}
       <Nav backend={backend} />
 
-      <div className="relative isolate z-0">
-        {/* Hero */}
-        <section className="relative h-[100svh] min-h-[640px] w-full overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_60%_40%,rgba(29,233,182,0.12),transparent_55%),radial-gradient(ellipse_at_20%_80%,rgba(167,139,250,0.12),transparent_50%)]" />
-          <div className="absolute inset-0">
-            <HeroScene />
-          </div>
-          {/* Keeps the headline readable over the scene on narrow screens. */}
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-void/30 via-void/55 to-void/20 md:bg-gradient-to-r md:from-void/70 md:via-void/20 md:to-transparent" />
-          <div className="pointer-events-none relative z-10 mx-auto flex h-full max-w-7xl flex-col justify-center px-4 sm:px-8">
+      {/* Page backdrop: slow colour glows, a faint hex grid and film grain, all CSS. */}
+      <div aria-hidden className="backdrop pointer-events-none fixed inset-0 z-0">
+        <div className="glow glow-a" />
+        <div className="glow glow-b" />
+        <div className="hexgrid" />
+        <div className="grain" />
+      </div>
+
+      <div className="relative isolate z-10">
+        {/* Hero: headline left, the AI core with its HUD right (below on phones). */}
+        <section className="relative grid min-h-[100svh] w-full items-center gap-6 px-4 pb-16 pt-28 sm:px-8 lg:px-[max(2rem,calc((100vw_-_80rem)/2_+_2rem))] lg:pb-10">
+          <div className="relative z-10 max-w-2xl lg:max-w-[46%]">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-              className="max-w-2xl"
             >
-              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-ghost/30 bg-ghost/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.25em] text-ghost">
+              <div className="mb-5 inline-flex items-center gap-2 border border-arc/30 bg-arc/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.3em] text-arc [clip-path:polygon(8px_0,100%_0,100%_calc(100%-8px),calc(100%-8px)_100%,0_100%,0_8px)]">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-arc" />
                 Autonomous SRE · MAPE-K
               </div>
               <h1 className="text-5xl font-semibold leading-[1.02] tracking-tight sm:text-7xl">
@@ -60,10 +62,10 @@ export default function Home() {
                 GhostOps detects a failure, diagnoses its root cause, writes the patch, proves it in a sandbox — and hands you a
                 pull request. Monitoring that finally closes the loop.
               </p>
-              <div className="pointer-events-auto mt-8 flex flex-wrap gap-3">
+              <div className="mt-8 flex flex-wrap gap-3">
                 <a
                   href="#pipeline"
-                  className="rounded-full bg-ghost px-6 py-3 font-semibold text-void shadow-[0_0_40px_rgba(124,247,228,0.4)] transition hover:brightness-110"
+                  className="cut-corners bg-arc px-6 py-3 font-semibold text-void shadow-[0_0_40px_rgba(56,217,255,0.45)] transition hover:brightness-110"
                 >
                   Trigger a live incident
                 </a>
@@ -71,7 +73,7 @@ export default function Home() {
                   href="https://github.com/likith1231/ghostops"
                   target="_blank"
                   rel="noreferrer"
-                  className="glass rounded-full px-6 py-3 font-semibold text-white transition hover:border-white/30"
+                  className="cut-corners border border-arc/30 bg-arc/5 px-6 py-3 font-semibold text-white transition hover:bg-arc/15"
                 >
                   View the code
                 </a>
@@ -81,7 +83,7 @@ export default function Home() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6, duration: 1 }}
-              className="mt-14 grid max-w-2xl grid-cols-2 gap-6 sm:grid-cols-4"
+              className="mt-12 grid max-w-2xl grid-cols-2 gap-6 border-t border-arc/15 pt-6 sm:grid-cols-4"
             >
               {HERO_FACTS.map(([n, label]) => (
                 <div key={label}>
@@ -91,13 +93,19 @@ export default function Home() {
               ))}
             </motion.dl>
           </div>
-          <div className="absolute bottom-6 left-1/2 z-10 -translate-x-1/2 font-mono text-[10px] uppercase tracking-[0.4em] text-mist/70">
-            scroll
-          </div>
+
+          {/* The hologram: full-bleed behind the hero on desktop, its own square below the text on phones. */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 1.4, delay: 0.2 }}
+            className="relative mx-auto aspect-square w-full max-w-[480px] lg:absolute lg:inset-0 lg:z-0 lg:aspect-auto lg:max-w-none"
+          >
+            <AiCore />
+          </motion.div>
         </section>
 
         <div className="relative">
-          <div className="grid-floor pointer-events-none absolute inset-x-0 top-0 h-[900px]" />
 
           <Section
             id="pipeline"
@@ -145,7 +153,7 @@ export default function Home() {
         </div>
       </div>
 
-      <footer className="border-t border-white/5">
+      <footer className="relative z-10 border-t border-white/5">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-10 text-sm text-mist sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div>
             <span className="font-semibold text-white">GhostOps</span> — Autonomous Remediation from Code to Cloud

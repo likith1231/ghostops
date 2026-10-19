@@ -19,14 +19,14 @@ export default function HowItWorks() {
         {STEPS.map((s, i) => (
           <li key={s.k} className="glass relative rounded-2xl p-5">
             <div className="mb-4 flex items-center gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-ghost/30 to-violet/30 font-mono text-lg font-semibold text-white">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-arc/30 to-violet/30 font-mono text-lg font-semibold text-white">
                 {s.k}
               </span>
               <span className="font-mono text-xs text-mist">0{i + 1}</span>
             </div>
             <h3 className="font-semibold text-white">{s.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-mist">{s.body}</p>
-            <p className="mt-3 font-mono text-[11px] text-ghost/80">{s.tech}</p>
+            <p className="mt-3 font-mono text-[11px] text-arc/80">{s.tech}</p>
           </li>
         ))}
       </ol>
@@ -34,7 +34,7 @@ export default function HowItWorks() {
         {GATES.map(([title, body], i) => (
           <div key={title} className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-transparent p-6">
             <div className="absolute right-4 top-3 font-mono text-6xl font-bold text-white/[0.04]">{i + 1}</div>
-            <div className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-ghost">{title}</div>
+            <div className="mb-2 text-sm font-semibold uppercase tracking-[0.2em] text-arc">{title}</div>
             <p className="text-sm leading-relaxed text-white/80">{body}</p>
           </div>
         ))}

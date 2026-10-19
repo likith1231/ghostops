@@ -61,7 +61,7 @@ export default function DetectorLab({ online }: { online: boolean | null }) {
               key={p.label}
               disabled={!online}
               onClick={() => run(p.body)}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/80 transition hover:border-ghost/50 hover:text-white disabled:opacity-40"
+              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/80 transition hover:border-arc/50 hover:text-white disabled:opacity-40"
             >
               {p.label}
             </button>
@@ -77,12 +77,12 @@ export default function DetectorLab({ online }: { online: boolean | null }) {
             onChange={(e) => setLogs(e.target.value)}
             rows={6}
             placeholder={"ModuleNotFoundError: No module named 'requests'"}
-            className="w-full resize-y rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-white outline-none focus:border-ghost/50"
+            className="w-full resize-y rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-white outline-none focus:border-arc/50"
           />
           <button
             disabled={!online || !logs.trim()}
             onClick={() => run({ logs: logs.split("\n") })}
-            className="mt-3 rounded-full bg-ghost px-4 py-1.5 text-sm font-semibold text-void disabled:opacity-40"
+            className="mt-3 rounded-full bg-arc px-4 py-1.5 text-sm font-semibold text-void disabled:opacity-40"
           >
             Scan logs
           </button>
@@ -128,7 +128,7 @@ export default function DetectorLab({ online }: { online: boolean | null }) {
                   </div>
                   <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
                     <motion.div
-                      className="h-full bg-gradient-to-r from-ghost to-violet"
+                      className="h-full bg-gradient-to-r from-arc to-violet"
                       initial={{ width: 0 }}
                       animate={{ width: `${d.confidence * 100}%` }}
                       transition={{ duration: 0.8, delay: 0.2 + i * 0.08 }}
@@ -138,7 +138,7 @@ export default function DetectorLab({ online }: { online: boolean | null }) {
                   <ul className="mt-3 space-y-1 font-mono text-[12px] text-white/70">
                     {d.evidence.map((e) => <li key={e} className="break-words">› {e}</li>)}
                   </ul>
-                  <p className="mt-3 text-sm text-ghost">→ {d.suggested_action}</p>
+                  <p className="mt-3 text-sm text-arc">→ {d.suggested_action}</p>
                 </motion.div>
               ))}
             </AnimatePresence>
