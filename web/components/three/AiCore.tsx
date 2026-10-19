@@ -1,7 +1,7 @@
 "use client";
 
+import { Billboard } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Bloom, EffectComposer } from "@react-three/postprocessing";
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { healState, type HealStage } from "@/lib/healCycle";
@@ -34,12 +34,16 @@ const ringFragment = /* glsl */ `
   uniform float uSegments;
   uniform float uFill;
   uniform float uOpacity;
+  uniform float uGlow;
   varying vec2 vPos;
   void main() {
     float r = length(vPos);
     float aa = fwidth(r) * 1.2;
-    float radial = smoothstep(uR1 - aa, uR1 + aa, r) * (1.0 - smoothstep(uR2 - aa, uR2 + aa, r));
-    if (radial <= 0.0) discard;
+    float band = smoothstep(uR1 - aa, uR1 + aa, r) * (1.0 - smoothstep(uR2 - aa, uR2 + aa, r));
+    // Soft halo outside the band: the glow is part of the ring, no post-processing needed.
+    float d = max(max(uR1 - r, r - uR2), 0.0);
+    float radial = max(band, exp(-d / uGlow) * 0.4);
+    if (radial < 0.02) discard;
     float a = mod(atan(vPos.y, vPos.x) - uStart, 6.28318531);
     if (a > uLen) discard;
     if (uSegments > 1.0 && fract(a / 6.28318531 * uSegments) > uFill) discard;
@@ -60,10 +64,13 @@ interface RingProps {
   spin?: number;
   /** Optional per-frame animation of the arc length (radians). */
   animateLen?: (t: number) => number;
+  glow?: number;
+  /** Extrusion depth: the ring is stacked this deep so it reads as a solid band at an angle. */
+  depth?: number;
 }
 
-function Ring({ r1, r2, color, start = 0, len = Math.PI * 2, segments = 1, fill = 1, opacity = 0.9, z = 0, spin = 0, animateLen }: RingProps) {
-  const mesh = useRef<THREE.Mesh>(null);
+function Ring({ r1, r2, color, start = 0, len = Math.PI * 2, segments = 1, fill = 1, opacity = 0.9, z = 0, spin = 0, animateLen, glow = 0.035, depth = 0 }: RingProps) {
+  const mesh = useRef<THREE.Group>(null);
   const uniforms = useMemo(
     () => ({
       uColor: { value: color }, // shared colour object: stage changes reach every ring
@@ -74,26 +81,32 @@ function Ring({ r1, r2, color, start = 0, len = Math.PI * 2, segments = 1, fill 
       uSegments: { value: segments },
       uFill: { value: fill },
       uOpacity: { value: opacity },
+      uGlow: { value: glow },
     }),
-    [color, r1, r2, start, len, segments, fill, opacity],
+    [color, r1, r2, start, len, segments, fill, opacity, glow],
   );
   useFrame((_, delta) => {
     if (mesh.current) mesh.current.rotation.z += delta * spin;
     if (animateLen) uniforms.uLen.value = animateLen(now());
   });
+  const layers = depth > 0 ? 6 : 1;
   return (
-    <mesh ref={mesh} position={[0, 0, z]}>
-      <planeGeometry args={[r2 * 2 + 0.1, r2 * 2 + 0.1]} />
-      <shaderMaterial
-        uniforms={uniforms}
-        vertexShader={ringVertex}
-        fragmentShader={ringFragment}
-        transparent
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+    <group ref={mesh} position={[0, 0, z]}>
+      {Array.from({ length: layers }, (_, i) => (
+        <mesh key={i} position={[0, 0, layers > 1 ? (i / (layers - 1) - 0.5) * depth : 0]}>
+          <planeGeometry args={[r2 * 2 + glow * 14, r2 * 2 + glow * 14]} />
+          <shaderMaterial
+            uniforms={uniforms}
+            vertexShader={ringVertex}
+            fragmentShader={ringFragment}
+            transparent
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      ))}
+    </group>
   );
 }
 
@@ -168,6 +181,28 @@ function Sweep({ color }: { color: THREE.Color }) {
   );
 }
 
+const haloFragment = /* glsl */ `
+  uniform vec3 uColor;
+  varying vec2 vPos;
+  void main() {
+    float r = length(vPos);
+    float a = exp(-r * r * 9.0) * 0.9 + exp(-r * 4.0) * 0.25;
+    gl_FragColor = vec4(uColor, a);
+  }
+`;
+
+function CoreHalo({ color }: { color: THREE.Color }) {
+  const uniforms = useMemo(() => ({ uColor: { value: color } }), [color]);
+  return (
+    <Billboard>
+      <mesh>
+        <planeGeometry args={[2.4, 2.4]} />
+        <shaderMaterial uniforms={uniforms} vertexShader={ringVertex} fragmentShader={haloFragment} transparent depthWrite={false} blending={THREE.AdditiveBlending} />
+      </mesh>
+    </Billboard>
+  );
+}
+
 function Core({ color }: { color: THREE.Color }) {
   const shell = useRef<THREE.Mesh>(null);
   const glow = useRef<THREE.MeshBasicMaterial>(null);
@@ -184,6 +219,7 @@ function Core({ color }: { color: THREE.Color }) {
   });
   return (
     <group>
+      <CoreHalo color={color} />
       <mesh>
         <sphereGeometry args={[0.13, 32, 32]} />
         <meshBasicMaterial ref={glow} toneMapped={false} />
@@ -290,13 +326,13 @@ function Hologram() {
 
     // Wide canvas (desktop hero): float right of the headline. Square canvas (phones): centred.
     const wide = viewport.width / viewport.height > 1.1;
-    const size = wide ? viewport.height / 4.6 : viewport.width / 4.4;
-    g.position.set(wide ? viewport.width * 0.24 : 0, wide ? 0.15 : 0.25, 0);
+    const size = wide ? viewport.height / 5 : viewport.width / 4.8;
+    g.position.set(wide ? viewport.width * 0.24 : 0, wide ? 0.1 : 0.2, 0);
     g.scale.setScalar(size);
 
-    // Tilted like a holo-table projection, slowly turning, leaning toward the mouse.
-    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, -0.95 - pointer.y * 0.18, 3, delta);
-    g.rotation.z = THREE.MathUtils.damp(g.rotation.z, 0.12 + pointer.x * 0.15, 3, delta);
+    // Faces the viewer; leans a little toward the mouse so the layered depths shift (parallax).
+    g.rotation.x = THREE.MathUtils.damp(g.rotation.x, -0.2 - pointer.y * 0.3, 3, delta);
+    g.rotation.y = THREE.MathUtils.damp(g.rotation.y, -0.38 + pointer.x * 0.35, 3, delta);
     if (turn.current) turn.current.rotation.z += delta * 0.08;
   });
 
@@ -304,14 +340,14 @@ function Hologram() {
 
   return (
     <group ref={group}>
-      <group ref={turn}>
+      <group ref={turn} scale={[1, 1, 1.8]}>
         <group position={[0, 0, 0.55]}>
           <Core color={accent} />
         </group>
         {/* top tier */}
         <Ring r1={0.52} r2={0.535} color={accent} opacity={0.9} z={0.4} />
         <Ring r1={0.56} r2={0.6} color={accent} start={0.3} animateLen={breathe(4.2, 1.4, 0.9)} spin={0.6} opacity={0.85} z={0.4} />
-        <Ring r1={0.66} r2={0.74} color={accent} segments={48} fill={0.62} len={5.4} spin={-0.25} opacity={0.75} z={0.3} />
+        <Ring r1={0.66} r2={0.74} color={accent} segments={48} fill={0.62} len={5.4} spin={-0.25} opacity={0.4} z={0.3} depth={0.12} />
         <Ticks radius={0.79} count={120} short={0.025} long={0.06} every={10} color={accentSoft} opacity={0.8} spin={0.12} z={0.3} />
         {/* middle tier */}
         <Ring r1={0.9} r2={0.905} color={accentSoft} opacity={0.7} z={0.05} />
@@ -322,7 +358,7 @@ function Hologram() {
         <Ring r1={1.15} r2={1.16} color={accentSoft} segments={90} fill={0.5} spin={0.08} opacity={0.6} z={-0.05} />
         <Sweep color={accent} />
         {/* bottom tier */}
-        <Ring r1={1.26} r2={1.33} color={accent} segments={72} fill={0.78} start={0.8} len={4.6} spin={-0.1} opacity={0.55} z={-0.25} />
+        <Ring r1={1.26} r2={1.33} color={accent} segments={72} fill={0.78} start={0.8} len={4.6} spin={-0.1} opacity={0.3} z={-0.25} depth={0.14} />
         <Ticks radius={1.4} count={240} short={0.02} long={0.08} every={20} color={accentSoft} opacity={0.6} spin={-0.04} z={-0.3} />
         <Ring r1={1.52} r2={1.53} color={accentSoft} opacity={0.5} z={-0.35} />
         {[0, 1, 2, 3].map((i) => (
@@ -346,9 +382,6 @@ export default function AiCore() {
       eventPrefix="client"
     >
       <Hologram />
-      <EffectComposer>
-        <Bloom mipmapBlur luminanceThreshold={0.42} luminanceSmoothing={0.25} intensity={0.85} radius={0.6} />
-      </EffectComposer>
     </Canvas>
   );
 }
