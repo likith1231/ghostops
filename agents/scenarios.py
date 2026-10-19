@@ -71,7 +71,11 @@ def exception_context() -> dict:
     )
     return {
         "alert_type": "app_exception",
-        "logs": ['10.244.0.1 - - "GET /api/user/profile HTTP/1.1" 500 -', *run.stderr.splitlines()],
+        # Repo-relative paths: absolute ones would leak the host's layout into PRs and the knowledge base.
+        "logs": [
+            '10.244.0.1 - - "GET /api/user/profile HTTP/1.1" 500 -',
+            *run.stderr.replace(f"{ROOT}/", "").splitlines(),
+        ],
         "metrics": {},
         "source_files": _read("sample-app/user_service.py", "sample-app/test_user_service.py"),
         "past_incidents": [],
