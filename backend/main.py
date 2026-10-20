@@ -295,7 +295,7 @@ def _read_source_file(path: str) -> dict[str, str]:
 # Pipeline runner (background)
 # ---------------------------------------------------------------------------
 # One incident at a time (shared with /api/simulate): the deployer switches git branches to open the PR.
-from backend import canary, live  # noqa: E402
+from backend import canary, cost, live  # noqa: E402
 from backend.runs import pipeline_lock as _pipeline_lock  # noqa: E402
 from backend.runs import store as run_store  # noqa: E402
 
@@ -334,6 +334,7 @@ def _run_canary_alert(alert: dict[str, Any]) -> None:
             alert, on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data), run_ref=run_id
         )
         passed = result["validation_result"].get("passed") is True
+        result["cost"] = cost.record(run_ref=run_id, alert_type="error_rate_high", started_at=alert.get("startsAt"))
         run_store.finish(run_id, "passed" if passed else "failed", result=result)
     except Exception as exc:  # noqa: BLE001
         logger.error("Canary remediation failed: %s", exc, exc_info=True)
@@ -401,6 +402,7 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
             fix_canary=fix_canary.run if os.getenv("FIX_CANARY", "1") in ("1", "true", "yes") else None,
         )
         passed = pipeline_result.get("validation_result", {}).get("passed") is True
+        pipeline_result["cost"] = cost.record(run_ref=run_id, alert_type="memory_high", started_at=alert.get("startsAt"))
         run_store.finish(run_id, "passed" if passed else "failed", result=pipeline_result)
 
         # ---- Step E: Log the result clearly ------------------------

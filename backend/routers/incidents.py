@@ -98,6 +98,14 @@ async def incidents_fix_library() -> list[dict]:
     return fix_library.entries(db_path=_DB_PATH)
 
 
+@router.get("/costs")
+async def incidents_costs(limit: int = 20) -> dict:
+    """What real incidents cost (measured from Prometheus) and what fixing them automatically saved."""
+    from backend import cost
+
+    return cost.summary(min(limit, 100))
+
+
 @router.get("/postmortems")
 async def incidents_postmortems(limit: int = 20) -> list[dict]:
     return postmortem.listing(min(limit, 100), db_path=_DB_PATH)
