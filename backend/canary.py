@@ -125,6 +125,19 @@ def diagnose(alert: dict[str, Any]) -> dict[str, Any]:
     previous_release = previous["env"].get("RELEASE", "stable") if previous else None
     previous_rate = rates.get(previous_release, 0.0) if previous_release and previous_release != release else 0.0
 
+    # Only the release that is running now can be rolled back. If the alert names a release that is
+    # no longer deployed (already rolled back; Alertmanager re-sends firing alerts), undoing again
+    # would re-deploy the bad release.
+    deployed_release = current["env"].get("RELEASE", "stable") if current else None
+    if current and release != deployed_release:
+        return {
+            "root_cause": "already_remediated",
+            "confidence": "high",
+            "summary": f"Release {release} is no longer deployed (running: {deployed_release}); nothing to roll back.",
+            "evidence": [{"type": "log", "reference": f"deployed revision {current['revision']} runs release {deployed_release}", "reasoning": "Deployment history (ReplicaSets)."}],
+            "release": release,
+            "rollback": None,
+        }
     age_s = (datetime.now(timezone.utc) - current["created"]).total_seconds() if current else None
     recent = age_s is not None and age_s < RECENT_ROLLOUT_S and previous is not None
     detection = detect_canary_regression(current_rate, previous_rate)
@@ -200,7 +213,9 @@ def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = 
     notify("validation", "running", {})
     validation = verify() if outcome["rolled_back"] else {
         "passed": False,
-        "summary": "Paused by the kill switch." if paused else "Not remediated automatically." if not plan else "The rollback did not run.",
+        "summary": "Paused by the kill switch." if paused
+        else diagnosis["summary"] if diagnosis["root_cause"] == "already_remediated"
+        else "Not remediated automatically." if not plan else "The rollback did not run.",
         "failing_tests": [],
         "test_output": "",
     }
@@ -216,7 +231,11 @@ def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = 
             started_at=datetime.fromisoformat(started.replace("Z", "+00:00")) if started else datetime.now(timezone.utc),
         )
     notify("deploy", "running", {})
-    pr_result = {"pr_created": False, "reason": "rollback" if validation["passed"] else "autonomy_paused" if paused else "needs_human"}
+    already = diagnosis["root_cause"] == "already_remediated"
+    pr_result = {
+        "pr_created": False,
+        "reason": "rollback" if validation["passed"] else "already_remediated" if already else "autonomy_paused" if paused else "needs_human",
+    }
     notify("deploy", "done", pr_result)
 
     try:

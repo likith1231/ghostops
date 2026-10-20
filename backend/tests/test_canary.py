@@ -102,8 +102,10 @@ def test_failed_rollback_is_reported(cluster):
 
 
 def test_no_recent_rollout_changes_nothing(cluster):
+    """The running (stable) release itself is failing and nothing was rolled out recently."""
     cluster["history"] = [rev(4, 600, "stable")]
-    result = canary.run_canary_pipeline(ALERT)
+    cluster["rates"] = {"stable": 0.4}
+    result = canary.run_canary_pipeline({"labels": {"alertname": "SampleAppHighErrorRate", "release": "stable"}})
     cluster["rb"].assert_not_called()
     assert result["patch"]["action"] == "none" and result["pr_result"]["reason"] == "needs_human"
 
@@ -188,3 +190,16 @@ def test_kill_switch_stops_the_rollback(cluster):
     cluster["rb"].assert_not_called()
     assert result["pr_result"]["reason"] == "autonomy_paused"
     assert "kill switch" in result["patch"]["explanation"]
+
+
+
+def test_repeated_alert_after_rollback_does_not_undo_the_rollback(cluster):
+    """Regression (seen on the kind cluster): Alertmanager re-sent the still-firing alert for
+    release canary-1 after GhostOps had rolled it back; the pipeline saw its own rollback as 'a
+    recent rollout' and undid it, re-deploying the bad release."""
+    cluster["history"] = [rev(4, 60, "stable"), rev(5, 3, "canary-1", "0.4"), rev(6, 1, "stable")]  # 6 = the rollback
+    cluster["rates"] = {"canary-1": 0.4, "stable": 0.0}  # the bad release's errors are still in the 1m window
+    result = canary.run_canary_pipeline(ALERT)
+    cluster["rb"].assert_not_called()
+    assert result["diagnosis"]["root_cause"] == "already_remediated"
+    assert result["pr_result"]["reason"] == "already_remediated"

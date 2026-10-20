@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS verifications (
     window_s    INTEGER NOT NULL,
     state       TEXT NOT NULL DEFAULT 'watching',
     samples     TEXT NOT NULL DEFAULT '[]',
+    chaos       TEXT,
     verdict_at  TEXT,
     mttr_s      REAL,
     note        TEXT
@@ -77,6 +78,8 @@ def _connect() -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.executescript(_SCHEMA)
+    if "chaos" not in {r[1] for r in conn.execute("PRAGMA table_info(verifications)")}:
+        conn.execute("ALTER TABLE verifications ADD COLUMN chaos TEXT")  # databases from before chaos verification
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -128,6 +131,16 @@ def tick(now: datetime | None = None) -> list[dict[str, Any]]:
                 state, note = "reopened", f"{row['alert_type']} unhealthy again (value {sample.get('value')}, alert {sample.get('alert')})"
             elif now >= deployed + timedelta(seconds=row["window_s"]) and any(s["ok"] for s in samples):
                 state, note = "resolved", f"healthy for {row['window_s']}s after the fix"
+                # Before calling it resolved, attack it (opt-in): pod-kill + re-trigger the fault.
+                from backend import chaos_verify
+
+                if chaos_verify.enabled():
+                    chaos = chaos_verify.run(row["alert_type"], row["run_ref"])
+                    conn.execute("UPDATE verifications SET chaos = ? WHERE id = ?", (json.dumps(chaos), row["id"]))
+                    if chaos["verdict"] == "survived":
+                        note += "; chaos-verified (pod-kill + re-triggered fault)"
+                    elif chaos["verdict"] in ("failed", "error"):
+                        state, note = "reopened", f"failed chaos verification: {chaos['summary']}"
             else:
                 conn.execute("UPDATE verifications SET samples = ? WHERE id = ?", (json.dumps(samples[-100:]), row["id"]))
                 continue
@@ -169,6 +182,7 @@ def listing(limit: int = 20) -> list[dict[str, Any]]:
     for r in rows:
         d = dict(r)
         d["samples"] = json.loads(d["samples"])[-20:]
+        d["chaos"] = json.loads(d["chaos"]) if d.get("chaos") else None
         out.append(d)
     return out
 
