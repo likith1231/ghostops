@@ -118,6 +118,7 @@ def _run_tests_in_sandbox(
     original_content: str,
     diff_text: str,
     extra_files: dict[str, str] | None = None,
+    test_target: str | None = None,
 ) -> dict:
     """Apply *diff_text* to *original_content* and run ``pytest`` on it inside a
     throwaway Docker container.
@@ -142,7 +143,8 @@ def _run_tests_in_sandbox(
         root = Path(td)
         _write_tree(root, {**(extra_files or {}), file_path: original_content})
 
-        error = _apply_patch(root, file_path, diff_text)
+        # An empty diff runs the tests on the unpatched code (used to prove a test fails before the fix).
+        error = _apply_patch(root, file_path, diff_text) if diff_text.strip() else None
         if error is not None:
             return {"exit_code": 1, "output": f"Patch could not be applied:\n{error}"[:4000]}
 
@@ -158,7 +160,7 @@ def _run_tests_in_sandbox(
         _ensure_sandbox_image(client)
         container = client.containers.create(
             image=SANDBOX_IMAGE,
-            command=["python", "-m", "pytest", "-v", "--tb=short", "-p", "no:cacheprovider"],
+            command=["python", "-m", "pytest", "-v", "--tb=short", "-p", "no:cacheprovider", *([Path(test_target).name] if test_target else [])],
             working_dir=workdir,
             environment={"PYTHONPATH": workdir, "PYTHONDONTWRITEBYTECODE": "1"},
             network_mode="none",           # no network access
@@ -324,6 +326,31 @@ def interpret_sandbox_result(sandbox_result: dict) -> dict:
         "summary": summary,
         "failing_tests": failing,
         "test_output": output[-4000:],
+    }
+
+
+def verify_regression_test(
+    file_path: str,
+    original_content: str,
+    diff_text: str,
+    extra_files: dict[str, str],
+    test: dict[str, str],
+) -> dict:
+    """A regression test must fail on the unpatched code and pass on the patched code."""
+    files = {**extra_files, test["path"]: test["content"]}
+    before = _run_tests_in_sandbox(file_path, original_content, "", files, test_target=test["path"])
+    after = _run_tests_in_sandbox(file_path, original_content, diff_text, files, test_target=test["path"])
+    failed_before = before["exit_code"] == 1  # pytest: 1 = tests failed (not a crash or usage error)
+    passed_after = after["exit_code"] == 0
+    return {
+        "path": test["path"],
+        "content": test["content"],
+        "source": test.get("source", "template"),
+        "failed_before": failed_before,
+        "passed_after": passed_after,
+        "verified": failed_before and passed_after,
+        "before_output": before["output"][-1500:],
+        "after_output": after["output"][-1500:],
     }
 
 

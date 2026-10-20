@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import blast_radius, correlation, feedback, governance, mock_llm, risk, shield
+from agents import blast_radius, correlation, feedback, governance, mock_llm, regression, risk, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -36,6 +36,7 @@ from agents.validation_officer import (
     build_validation_task,
     interpret_sandbox_result,
     run_validation_checks,
+    verify_regression_test,
 )
 from opentelemetry import trace
 
@@ -198,6 +199,19 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             )
             validation_result_raw = validation_crew.kickoff()
             validation_result = _safe_json_loads(str(validation_result_raw))
+        # A regression test that fails before the fix and passes after it (both proven in the sandbox).
+        if validation_result.get("passed") is True:
+            test = regression.generate(diagnosis, {**patch, "file_path": file_path})
+            if test:
+                proof = verify_regression_test(file_path, original_content, diff_text, extra_files, test)
+                validation_result["regression_test"] = proof
+                if proof["verified"]:
+                    patch["regression_test"] = {"path": proof["path"], "content": proof["content"]}
+                governance.record(
+                    "regression_test", "verified" if proof["verified"] else "rejected",
+                    f"{proof['path']}: failed before={proof['failed_before']}, passed after={proof['passed_after']}",
+                    run_ref=failure_context.get("run_ref"),
+                )
         span.set_attribute("validation_passed", validation_result.get("passed", False))
         logger.info("Validation passed: %s", validation_result.get("passed"))
     governance.record(

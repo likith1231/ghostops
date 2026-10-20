@@ -21,6 +21,7 @@ def needs_docker():
         pytest.skip("Docker is not available")
 
 
+@pytest.mark.real_sandbox
 @pytest.mark.parametrize(
     "build,root_cause,file",
     [
@@ -43,6 +44,11 @@ def test_scenario_is_fixed_and_validated_for_real(tmp_path, build, root_cause, f
     assert result["patch"]["file_path"] == file
     assert result["validation_result"]["passed"] is True, result["validation_result"]["test_output"]
     assert result["pr_result"] == {"pr_created": False, "reason": "mock_mode"}
+    # The generated regression test was proven in the sandbox: fails before the fix, passes after.
+    proof = result["validation_result"]["regression_test"]
+    assert proof["failed_before"] and proof["passed_after"], proof
+    assert result["patch"]["regression_test"]["path"].startswith("sample-app/test_ghostops_regression_")
+    assert result["risk"]["level"] in ("low", "medium") and any(f["factor"] == "regression test" for f in result["risk"]["factors"])
     logged = get_past_incidents(db_path=db)
     assert len(logged) == 1 and logged[0]["validation_passed"] == 1 and logged[0]["root_cause"] == root_cause
 

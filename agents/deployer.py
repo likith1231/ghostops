@@ -296,6 +296,11 @@ def create_pr(
         # 5. Apply the diff
         # --------------------------------------------------------------
         _apply_diff(diff_text, failure_context, repo)
+        regression_test = patch.get("regression_test")
+        if regression_test:
+            test_path = repo / regression_test["path"]
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_text(regression_test["content"], encoding="utf-8")
 
         # --------------------------------------------------------------
         # 6. Commit
