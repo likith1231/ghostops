@@ -129,11 +129,50 @@ knowledge base. See [`web/README.md`](web/README.md).
 | `GET /api/runs` · `/api/runs/{id}` · `/api/runs/{id}/events` | Follow a run (polling or Server-Sent Events) |
 | `POST /api/detect` · `GET /api/usecases` | Run the deterministic detectors / the 17-use-case catalogue |
 | `GET /api/incidents/summary` · `/recent` · `/timeseries` · `/{id}` | Knowledge-base reads |
+| `GET /api/incidents/feedback` · `POST /api/incidents/feedback/sync` | Human acceptance of GhostOps' PRs, synced from GitHub |
+| `GET /api/live/status` · `POST /api/live/leak` · `POST /api/live/canary` | Real incidents on the cluster (B1 leak, C1 bad release) |
+| `GET /api/activity` | What GhostOps is doing right now (drives the hero visuals) |
 
 ### Use-case coverage
 
-16 of the 17 catalogued use cases have a deterministic detector (`agents/detectors/`). A1, B1 and C4
-work end to end (diagnose → patch → sandbox → PR), and C1 has a `rollback_deployment()` action.
+16 of the 17 catalogued use cases have a deterministic detector (`agents/detectors/`). Four work end to end:
+
+| Use case | Trigger | Remediation |
+|---|---|---|
+| **B1** memory leak | `SampleAppHighMemory` (memory > 80% of limit for 30 s) | AI patch → OPA → Docker sandbox → PR |
+| **C4** CI test failure | failing pytest run | AI patch → OPA → Docker sandbox → PR |
+| **A1** unhandled exception | traceback | AI patch (null-safety guard) → OPA → sandbox → PR |
+| **C1** canary regression | `SampleAppHighErrorRate` (> 20% 5xx per release for 30 s) | diagnose from rollout history → `kubectl rollout undo` → verify with real traffic (no PR) |
+
+## 🔴 Live Mode (real cluster)
+
+With the kind cluster running and the backend listening on `0.0.0.0:8000` (so Alertmanager can reach it),
+the dashboard's **LIVE** buttons create real incidents:
+
+* **memory leak**: leaks memory in the running sample-app pod through the Kubernetes API, Prometheus fires
+  `SampleAppHighMemory`, and Alertmanager's real webhook starts the pipeline;
+* **bad release**: ships a release that fails half of its checkouts, drives real traffic, Prometheus fires
+  `SampleAppHighErrorRate`, and GhostOps rolls it back and verifies recovery.
+
+Any real alert (Chaos Mesh, the demo script) shows up live on the dashboard on its own, and the hero hologram
+and background follow what GhostOps is actually doing (`GET /api/activity`).
+
+## 🔁 Feedback Loop
+
+`agents/feedback.py` reads what reviewers did with GhostOps' PRs from GitHub (merged, closed, open, or
+superseded when labelled `duplicate`) into the knowledge base. The dashboard shows the human acceptance
+rate, and every new diagnosis receives past incidents together with the reviewer's decision.
+
+## ✅ Tests
+
+| Suite | What | Count |
+|---|---|---|
+| `pytest` | agents, detectors, backend, live mode, C1, feedback loop, PR flow against a real git repo, end-to-end runs through the real Docker sandbox | 316 |
+| Rego (`conftest verify`) | the OPA allowlist, including path traversal | 10 |
+| Vitest | website logic: diff view, pipeline states, replay, charts, API client, activity feed | 26 |
+| e2e (`web/e2e/smoke.mjs`) | Chrome against the built site and a real backend: a C4 run validated by the sandbox, palette, detector lab, replay | 1 flow |
+
+Backend source coverage is about 90%. CI runs all of it on every pull request.
 
 ---
 
@@ -170,7 +209,9 @@ GhostOps has been proven to resolve complex issues end-to-end. Here are two real
 ## ⚠️ Known Limitations
 
 GhostOps is currently a localized Proof of Concept and is **not yet production-hardened**:
-*   **Local-Only Deployment:** Assumes a local `kind` cluster environment.
+*   **Local-Only Backend:** The backend and cluster run on a local `kind` cluster (or the Oracle VM via `deploy/oracle/setup.sh`); the website on Vercel is frontend-only.
+*   **Open Live API:** In live mode the backend listens on all interfaces and `/api/simulate` and `/api/live/*` have no authentication: keep it on a trusted network.
 *   **Vault in Dev Mode:** HashiCorp Vault is running in `-dev` mode with HTTP. In production, TLS and proper auto-unseal must be configured.
 *   **Manual OPA Updates:** The OPA Gatekeeper allowlist (`allowlist.rego`) strictly dictates which files the AI is permitted to patch. Currently, new authorized files (like `app.py` or `math_utils.py`) must be manually added to the policy.
-*   **API Rate Limits:** The multi-agent pipeline is token-heavy and reliant on the Claude API limits. Extensive debugging sessions may trigger rate-limiting errors (`429 Resource Exhausted`).
+*   **API Rate Limits:** The multi-agent pipeline is token-heavy and reliant on the Claude API limits. Extensive debugging sessions may trigger rate-limiting errors (`429 Resource Exhausted`). Mock mode (`GHOSTOPS_MOCK_LLM=1`) runs everything else without a key.
+*   **Sample Workloads:** The end-to-end use cases run against the bundled sample app; the other catalogued use cases have detectors but no remediation yet.
