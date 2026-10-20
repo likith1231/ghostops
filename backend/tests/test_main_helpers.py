@@ -130,3 +130,13 @@ def test_alert_without_pod_skips_cluster_calls():
     prom.assert_not_called()
     ctx = run.call_args.args[0]
     assert ctx["logs"][0].startswith("[WARN] No pod name") and ctx["metrics"] == {}
+
+
+def test_alert_pipeline_gets_past_incidents_as_context():
+    past = [{"root_cause": "memory_leak", "human_review": "merged"}]
+    with patch.object(main, "_fetch_pod_logs", return_value=["l"]), patch.object(main, "_query_prometheus_memory", return_value={}), \
+         patch.object(main, "past_incident_context", return_value=past) as ctx_fn, \
+         patch.object(main, "run_pipeline", return_value={"validation_result": {"passed": True}}) as run:
+        main._run_alert_pipeline({"labels": {"alertname": "SampleAppHighMemory", "pod": "p"}}, "p")
+    ctx_fn.assert_called_once_with("memory_high")
+    assert run.call_args.args[0]["past_incidents"] == past

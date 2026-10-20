@@ -44,9 +44,17 @@ CREATE TABLE IF NOT EXISTS incidents (
     validation_passed INTEGER,
     pr_created       INTEGER,
     pr_url           TEXT,
-    outcome_summary  TEXT
+    outcome_summary  TEXT,
+    pr_state         TEXT,
+    pr_checked_at    TEXT
 );
 """
+
+# Columns added after the first release; init_db adds them to older databases.
+_MIGRATIONS = {
+    "pr_state": "ALTER TABLE incidents ADD COLUMN pr_state TEXT",  # open | merged | closed (from GitHub)
+    "pr_checked_at": "ALTER TABLE incidents ADD COLUMN pr_checked_at TEXT",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +75,10 @@ def init_db(db_path: str | Path | None = None) -> None:
     try:
         conn = sqlite3.connect(str(path))
         conn.execute(_CREATE_TABLE_SQL)
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(incidents)")}
+        for column, sql in _MIGRATIONS.items():
+            if column not in existing:
+                conn.execute(sql)
         conn.commit()
         conn.close()
         logger.info("Knowledge base initialised: %s", path)
@@ -198,3 +210,22 @@ def get_past_incidents(
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to query past incidents: %s", exc)
         return []
+
+
+def past_incident_context(alert_type: str, limit: int = 5, *, db_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Recent incidents of the same kind, shaped for the Diagnostic Reasoner.
+
+    Includes what the human reviewer did with each fix (merged / closed / open),
+    so the pipeline learns which diagnoses and patches were accepted.
+    """
+    rows = get_past_incidents(alert_type, limit, db_path=db_path)
+    return [
+        {
+            "root_cause": r.get("root_cause"),
+            "confidence": r.get("confidence"),
+            "validated": bool(r.get("validation_passed")),
+            "human_review": r.get("pr_state") or ("no PR" if not r.get("pr_created") else "unknown"),
+            "outcome": (r.get("outcome_summary") or "")[:300],
+        }
+        for r in rows
+    ]

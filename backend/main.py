@@ -40,7 +40,7 @@ load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Now that the path is set up, import the agent pipeline.
 from agents.crew import run_pipeline  # noqa: E402
-from agents.knowledge_base import init_db  # noqa: E402
+from agents.knowledge_base import init_db, past_incident_context  # noqa: E402
 
 # Initialise the SQLite knowledge base (creates DB + table if needed).
 init_db()
@@ -324,7 +324,8 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         "logs": logs,
         "metrics": metrics,
         "source_files": source_files,
-        "past_incidents": [],  # knowledge base integration comes later
+        # What happened last time: diagnoses, fixes and whether a human merged them.
+        "past_incidents": past_incident_context("memory_high"),
     }
 
     logger.info(

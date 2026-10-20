@@ -103,6 +103,17 @@ export interface Summary {
   prs_created: number;
 }
 
+export interface Feedback {
+  prs: number;
+  merged: number;
+  closed: number;
+  superseded: number;
+  open: number;
+  unknown: number;
+  acceptance_rate: number | null;
+  last_checked: string | null;
+}
+
 export interface DayCount {
   date: string;
   passed: number;
@@ -171,6 +182,8 @@ export const api = {
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   summary: () => request<Summary>("/api/incidents/summary"),
   timeseries: () => request<DayCount[]>("/api/incidents/timeseries"),
+  feedback: () => request<Feedback>("/api/incidents/feedback"),
+  syncFeedback: () => request<Feedback & { checked: number; failed: number }>("/api/incidents/feedback/sync", { method: "POST" }),
   recent: (limit = 12) => request<Incident[]>(`/api/incidents/recent?limit=${limit}`),
   incident: (id: number) => request<Incident>(`/api/incidents/${id}`),
   usecases: () => request<UseCase[]>("/api/usecases"),

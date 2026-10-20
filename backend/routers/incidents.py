@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
 import logging
+from agents import feedback
 from agents.knowledge_base import _DB_PATH, get_past_incidents
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
@@ -83,6 +84,19 @@ async def incidents_timeseries() -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to query incident timeseries: %s", exc)
         return []
+
+
+@router.get("/feedback")
+async def incidents_feedback() -> dict:
+    """What human reviewers did with GhostOps' PRs, as last synced from GitHub."""
+    return feedback.acceptance(db_path=_DB_PATH)
+
+
+@router.post("/feedback/sync")
+def incidents_feedback_sync() -> dict:
+    """Ask GitHub for the current state of every undecided PR, then report."""
+    counts = feedback.sync_pr_outcomes(db_path=_DB_PATH)
+    return {**counts, **feedback.acceptance(db_path=_DB_PATH)}
 
 
 @router.get("/{incident_id}")
