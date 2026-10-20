@@ -32,6 +32,8 @@ import docker
 from crewai import Agent, LLM, Task
 from docker.errors import ContainerError, ImageNotFound
 
+from agents import blast_radius
+
 from agents.config import (
     LLM_API_KEY,
     LLM_OPTIONS,
@@ -285,6 +287,11 @@ def run_validation_checks(
     opa_result = _run_opa_checks(file_path, original_content, diff_text)
     if opa_result is not None:
         return opa_result
+    # Gate 2: what the patch does (size, tests, dependencies, secrets, dangerous/network calls).
+    blast = blast_radius.analyze(diff_text, original_content)
+    if not blast["passed"]:
+        details = "\n".join(f"- {v['rule']}: {v['detail']}" for v in blast["violations"])
+        return {"exit_code": 1, "output": f"Blast-radius gate rejected the patch:\n{details}"}
     return _run_tests_in_sandbox(file_path, original_content, diff_text, extra_files)
 
 
@@ -303,6 +310,9 @@ def interpret_sandbox_result(sandbox_result: dict) -> dict:
         summary = f"All {m.group(1)} tests passed in the sandbox." if m else "All tests passed in the sandbox."
     elif "OPA Policy Violation" in output:
         summary = "Rejected by OPA policy before reaching the sandbox."
+    elif output.startswith("Blast-radius gate rejected"):
+        rules = sorted({line[2:].split(":")[0] for line in output.splitlines()[1:] if line.startswith("- ")})
+        summary = f"Rejected by the blast-radius gate ({', '.join(rules)}) before reaching the sandbox."
     elif output.startswith("Patch could not be applied") or "Patch failed" in output:
         summary = "The patch did not apply cleanly."
     elif failing:
