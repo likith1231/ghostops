@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import governance, mock_llm
+from agents import governance, mock_llm, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -97,6 +97,15 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         ``{"diagnosis": ..., "patch": ..., "validation_result": ...}``
     """
     notify = on_stage or _no_op
+
+    # ----- 0. SHIELD: untrusted telemetry never reaches the model raw ----
+    failure_context, shield_report = shield.sanitize(failure_context)
+    if shield_report["findings"]:
+        logger.warning("Shield: %s risk, %d line(s) quarantined", shield_report["risk"], shield_report["quarantined"])
+        governance.record(
+            "shield", shield_report["risk"], f"{shield_report['quarantined']} line(s) quarantined",
+            run_ref=failure_context.get("run_ref"), evidence={"findings": shield_report["findings"][:10]},
+        )
 
     # ----- 1. DIAGNOSTIC REASONER ------------------------------------
     logger.info("Stage 1/3 — Running Diagnostic Reasoner …")
@@ -253,6 +262,7 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         "patch": patch,
         "validation_result": validation_result,
         "pr_result": pr_result,
+        "shield": shield_report,
     }
 
 
