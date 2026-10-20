@@ -159,7 +159,7 @@ RESULT = {"diagnosis": {}, "patch": {}, "validation_result": {"passed": True}, "
 def _alert_pipeline(store, result=RESULT, error=None):
     from backend import main
 
-    def fake_pipeline(ctx, on_stage=None):
+    def fake_pipeline(ctx, on_stage=None, **kwargs):
         if error:
             raise error
         on_stage("diagnosis", "running", {})

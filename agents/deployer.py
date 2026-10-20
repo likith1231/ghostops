@@ -709,3 +709,11 @@ def page_human(summary: str, details: dict[str, Any]) -> dict[str, Any]:
         return {"paged": resp.status_code < 300, "status": resp.status_code}
     except requests.RequestException as exc:
         return {"paged": False, "reason": str(exc)}
+
+
+def comment_pr(number: int, body: str) -> bool:
+    """Add a comment to a PR (the postmortem). Never raises."""
+    try:
+        return _gh("POST", f"/issues/{number}/comments", {"body": body[:65000]}).status_code == 201
+    except requests.RequestException:
+        return False

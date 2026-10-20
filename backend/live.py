@@ -71,7 +71,8 @@ def _core():
 
 def _pod_name() -> str:
     client = _core()
-    pods = client.CoreV1Api().list_namespaced_pod(NAMESPACE, label_selector=f"app={DEPLOYMENT}")
+    # The stable workload only: a fix canary (track=canary) shares the app label for traffic.
+    pods = client.CoreV1Api().list_namespaced_pod(NAMESPACE, label_selector=f"app={DEPLOYMENT},track!=canary")
     running = [p for p in pods.items if p.status.phase == "Running" and not p.metadata.deletion_timestamp]
     if not running:
         raise RuntimeError(f"no running {DEPLOYMENT} pod in namespace {NAMESPACE}")

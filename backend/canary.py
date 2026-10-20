@@ -49,7 +49,7 @@ StageCallback = Callable[[str, str, dict], None]
 def rollout_history() -> list[dict[str, Any]]:
     """The deployment's revisions (oldest first): revision, created, env, image."""
     client = live._core()
-    sets = client.AppsV1Api().list_namespaced_replica_set(live.NAMESPACE, label_selector=f"app={live.DEPLOYMENT}")
+    sets = client.AppsV1Api().list_namespaced_replica_set(live.NAMESPACE, label_selector=f"app={live.DEPLOYMENT},track!=canary")
     out = []
     for rs in sets.items:
         revision = (rs.metadata.annotations or {}).get("deployment.kubernetes.io/revision")
@@ -218,6 +218,16 @@ def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = 
     notify("deploy", "running", {})
     pr_result = {"pr_created": False, "reason": "rollback" if validation["passed"] else "autonomy_paused" if paused else "needs_human"}
     notify("deploy", "done", pr_result)
+
+    try:
+        from agents import postmortem
+
+        postmortem.write(
+            run_ref=run_ref, alert_type="error_rate_high", diagnosis=_public(diagnosis), patch=patch,
+            validation=validation, outcome=pr_result, started_at=alert.get("startsAt"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Could not write the postmortem: %s", exc)
 
     try:
         from agents.knowledge_base import log_incident

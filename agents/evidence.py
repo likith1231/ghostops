@@ -122,6 +122,7 @@ def build(
                 "passed_after": regression.get("passed_after"),
             } if regression else None,
             "counterfactual_replay": {k: (validation.get("replay") or {}).get(k) for k in ("verdict", "recorded_requests")} if validation.get("replay") else None,
+            "fix_canary": {k: (validation.get("fix_canary") or {}).get(k) for k in ("verdict", "image", "memory_growth_kib_per_request", "error_rate")} if validation.get("fix_canary") else None,
         },
         "risk": {"score": (risk or {}).get("score"), "level": (risk or {}).get("level"), "decision": (risk or {}).get("decision")},
         "shield": {"risk": (shield or {}).get("risk"), "quarantined": (shield or {}).get("quarantined")},

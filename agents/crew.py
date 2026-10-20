@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import blast_radius, correlation, evidence, feedback, governance, mock_llm, regression, replay, risk, shield
+from agents import blast_radius, correlation, evidence, feedback, governance, mock_llm, postmortem, regression, replay, risk, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -75,7 +75,7 @@ def _safe_json_loads(text: str) -> dict:
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
-def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -> dict[str, Any]:
+def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None, fix_canary: Callable[..., dict] | None = None) -> dict[str, Any]:
     """Execute the GhostOps diagnosis → patch → validation pipeline.
 
     Parameters
@@ -92,6 +92,10 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         Optional ``(stage, status, data)`` callback, called as each stage
         (``diagnosis``, ``patch``, ``validation``, ``deploy``) starts and ends.
         The backend uses it to stream live progress to the dashboard.
+    fix_canary:
+        Optional ``(file_path, diff, logs, run_ref=, risk_level=) -> result``: canary the
+        validated fix on the cluster before delivering it (the backend passes one for
+        real alerts).
 
     Returns
     -------
@@ -239,13 +243,37 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             rate = feedback.acceptance(str(diagnosis.get("root_cause", "")))["acceptance_rate"]
         except Exception:  # noqa: BLE001
             rate = None
-        risk_report = risk.score(
-            diagnosis=diagnosis, patch=patch, validation=validation_result,
-            blast=blast_radius.analyze(diff_text, original_content), shield=shield_report,
-            acceptance_rate=rate, occurrences=int(failure_context.get("occurrences", 1) or 1),
-            regression_test=bool(patch.get("regression_test")),
-            replay_verdict=(validation_result.get("replay") or {}).get("verdict"),
-        )
+        blast_report = blast_radius.analyze(diff_text, original_content)
+
+        def score(canary_verdict=None):
+            return risk.score(
+                diagnosis=diagnosis, patch=patch, validation=validation_result, blast=blast_report, shield=shield_report,
+                acceptance_rate=rate, occurrences=int(failure_context.get("occurrences", 1) or 1),
+                regression_test=bool(patch.get("regression_test")),
+                replay_verdict=(validation_result.get("replay") or {}).get("verdict"), canary_verdict=canary_verdict,
+            )
+
+        risk_report = score()
+
+        # ----- CANARY: the fix on a real pod before it goes anywhere else ------
+        if fix_canary is not None:
+            notify("validation", "running", {**validation_result, "step": "fix_canary"})
+            canary_result = fix_canary(
+                file_path, diff_text, failure_context.get("replay_logs") or failure_context.get("logs", []),
+                run_ref=run_ref, risk_level=risk_report["level"],
+                # The incident's own leak rate, measured by the counterfactual replay.
+                incident_kib_per_request=((validation_result.get("replay") or {}).get("unpatched") or {}).get("kib_growth_per_request"),
+            )
+            validation_result["fix_canary"] = canary_result
+            if canary_result.get("verdict") in ("failed", "error"):
+                validation_result["passed"] = False
+                validation_result["summary"] = canary_result.get("summary", "The fix canary did not hold up.")
+                risk_report = None
+            else:
+                risk_report = score(canary_result.get("verdict"))
+            notify("validation", "done", validation_result)
+
+    if risk_report is not None:
         governance.record(
             "risk", risk_report["level"], f"score {risk_report['score']} → {risk_report['decision']}",
             run_ref=run_ref, evidence={"factors": risk_report["factors"]},
@@ -255,7 +283,7 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             signed = evidence.sign(evidence.build(
                 run_ref=run_ref, alert_type=str(failure_context.get("alert_type", "unknown")), diagnosis=diagnosis,
                 patch={**patch, "file_path": file_path}, validation=validation_result,
-                blast=blast_radius.analyze(diff_text, original_content), risk=risk_report, shield=shield_report,
+                blast=blast_report, risk=risk_report, shield=shield_report,
             ))
             patch["evidence"] = signed
             governance.record("evidence", "signed", f"key {signed['key_fingerprint']}", run_ref=run_ref,
@@ -296,6 +324,21 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
     )
     notify("deploy", "done", pr_result)
 
+    # ----- POSTMORTEM (every run, pass or fail) -----------------------
+    report = None
+    try:
+        report = postmortem.write(
+            run_ref=run_ref, alert_type=str(failure_context.get("alert_type", "unknown")), diagnosis=diagnosis,
+            patch={**patch, "file_path": file_path}, validation=validation_result, outcome=pr_result,
+            started_at=failure_context.get("started_at"),
+        )
+        if pr_result.get("pr_created") and pr_result.get("pr_number"):
+            from agents import deployer
+
+            deployer.comment_pr(pr_result["pr_number"], report["markdown"])
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Could not write the postmortem: %s", exc)
+
     # ----- 5. LOG TO KNOWLEDGE BASE (every run, pass or fail) --------
     try:
         from agents.knowledge_base import log_incident
@@ -318,6 +361,7 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         "pr_result": pr_result,
         "shield": shield_report,
         "risk": risk_report,
+        "postmortem": {"id": report["id"], "title": report["title"]} if report else None,
     }
 
 

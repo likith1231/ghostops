@@ -382,6 +382,7 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         "live", f"Live alert: {alert.get('labels', {}).get('alertname', 'alert')} on {pod_name or 'cluster'}"
     )["id"]
     failure_context["run_ref"] = run_id
+    failure_context["started_at"] = alert.get("startsAt")
     if pod_name:
         failure_context["replay_logs"] = _fetch_pod_logs(pod_name, tail=REPLAY_LOG_LINES)
     if alert.get("_incident"):
@@ -391,9 +392,13 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         {"alert_type": failure_context["alert_type"], "metrics": metrics, "logs": logs[-20:]},
     )
     try:
+        from backend import fix_canary
+
         pipeline_result = run_pipeline(
             failure_context,
             on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data),
+            # Real alerts canary the validated fix on the cluster before it is delivered.
+            fix_canary=fix_canary.run if os.getenv("FIX_CANARY", "1") in ("1", "true", "yes") else None,
         )
         passed = pipeline_result.get("validation_result", {}).get("passed") is True
         run_store.finish(run_id, "passed" if passed else "failed", result=pipeline_result)

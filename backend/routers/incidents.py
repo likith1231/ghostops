@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
 import logging
-from agents import correlation, feedback
+from agents import correlation, feedback, postmortem
 from agents.knowledge_base import _DB_PATH, get_past_incidents
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
@@ -90,6 +90,19 @@ async def incidents_timeseries() -> list[dict]:
 async def incidents_correlated(limit: int = 20) -> list[dict]:
     """Incidents as GhostOps groups them: repeats and related alerts on one workload."""
     return correlation.incidents(min(limit, 100), db_path=_DB_PATH)
+
+
+@router.get("/postmortems")
+async def incidents_postmortems(limit: int = 20) -> list[dict]:
+    return postmortem.listing(min(limit, 100), db_path=_DB_PATH)
+
+
+@router.get("/postmortems/{run_ref}")
+async def incidents_postmortem(run_ref: str) -> dict:
+    report = postmortem.get(run_ref, db_path=_DB_PATH)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no postmortem for this run")
+    return report
 
 
 @router.get("/feedback")
