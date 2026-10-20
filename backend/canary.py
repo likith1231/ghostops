@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from agents import governance
@@ -229,6 +229,8 @@ def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = 
         verification.start(
             kind="rollback", alert_type="error_rate_high", run_ref=run_ref, reference=diagnosis.get("release"),
             started_at=datetime.fromisoformat(started.replace("Z", "+00:00")) if started else datetime.now(timezone.utc),
+            # Let the restored release collect fresh samples before judging it.
+            deployed_at=datetime.now(timezone.utc) + timedelta(seconds=verification.ROLLBACK_SETTLE_S),
         )
     notify("deploy", "running", {})
     already = diagnosis["root_cause"] == "already_remediated"

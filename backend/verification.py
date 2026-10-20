@@ -41,13 +41,17 @@ SIGNALS = {
         0.8,
         "SampleAppHighMemory",
     ),
+    # Only the release deployed now: after a rollback the bad release's errors linger in the
+    # 1-minute rate window (and its alert keeps firing for a while).
     "error_rate_high": (
-        'max(sum by (release) (rate(sample_app_requests_total{status=~"5.."}[1m]))'
-        " / sum by (release) (rate(sample_app_requests_total[1m])))",
+        'sum(rate(sample_app_requests_total{{status=~"5..", release="{release}"}}[1m]))'
+        ' / sum(rate(sample_app_requests_total{{release="{release}"}}[1m]))',
         0.2,
         "SampleAppHighErrorRate",
     ),
 }
+ROLLBACK_SETTLE_S = int(os.getenv("VERIFY_ROLLBACK_SETTLE_S", "30"))
+UNHEALTHY_TO_REOPEN = 2  # consecutive unhealthy samples; one can be metric lag
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS verifications (
@@ -102,13 +106,24 @@ def start(*, kind: str, alert_type: str, started_at: datetime, deployed_at: date
         conn.close()
 
 
+def _deployed_release() -> str:
+    from backend import canary
+
+    history = canary.rollout_history()
+    return history[-1]["env"].get("RELEASE", "stable") if history else "stable"
+
+
 def _probe(alert_type: str) -> dict[str, Any]:
     from backend import live
 
     query, threshold, alert = SIGNALS[alert_type]
     try:
+        labels = None
+        if "{release}" in query:
+            release = _deployed_release()
+            query, labels = query.format(release=release), {"release": release}
         value = live._prom(query)
-        state = live.alert_state(alert)
+        state = live.alert_state(alert, labels)
     except Exception as exc:  # noqa: BLE001
         return {"ok": None, "error": str(exc)}
     healthy = (value is None or value < threshold) and state != "firing"
@@ -127,7 +142,8 @@ def tick(now: datetime | None = None) -> list[dict[str, Any]]:
                 continue  # merged, waiting for the deployment grace period
             sample = {"at": now.isoformat(), **_probe(row["alert_type"])}
             samples = json.loads(row["samples"]) + [sample]
-            if sample["ok"] is False:
+            recent = [s["ok"] for s in samples[-UNHEALTHY_TO_REOPEN:]]
+            if len(recent) == UNHEALTHY_TO_REOPEN and all(ok is False for ok in recent):
                 state, note = "reopened", f"{row['alert_type']} unhealthy again (value {sample.get('value')}, alert {sample.get('alert')})"
             elif now >= deployed + timedelta(seconds=row["window_s"]) and any(s["ok"] for s in samples):
                 state, note = "resolved", f"healthy for {row['window_s']}s after the fix"

@@ -104,11 +104,14 @@ def _prom(query: str) -> float | None:
     return float(result[0]["value"][1]) if result else None
 
 
-def alert_state(name: str = ALERT) -> str:
-    """inactive | pending | firing"""
+def alert_state(name: str = ALERT, labels: dict[str, str] | None = None) -> str:
+    """inactive | pending | firing (optionally only alerts carrying these labels)."""
     resp = requests.get(f"{PROMETHEUS_URL}/api/v1/alerts", timeout=5)
     resp.raise_for_status()
-    states = {a["state"] for a in resp.json()["data"]["alerts"] if a["labels"].get("alertname") == name}
+    states = {
+        a["state"] for a in resp.json()["data"]["alerts"]
+        if a["labels"].get("alertname") == name and all(a["labels"].get(k) == v for k, v in (labels or {}).items())
+    }
     return "firing" if "firing" in states else "pending" if "pending" in states else "inactive"
 
 

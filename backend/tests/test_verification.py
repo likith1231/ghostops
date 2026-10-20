@@ -36,12 +36,32 @@ def test_healthy_window_resolves_with_mttr():
     assert verification.mttr_summary()["median_s"] == 201
 
 
-def test_regression_reopens():
+def test_regression_reopens_after_two_unhealthy_samples():
     verification.start(kind="merge", alert_type="memory_high", started_at=T0, deployed_at=T0, window_s=600)
-    with probes(True, False):
+    with probes(True, False, False):
         verification.tick(T0 + timedelta(seconds=15))
-        done = verification.tick(T0 + timedelta(seconds=30))
+        assert verification.tick(T0 + timedelta(seconds=30)) == [], "one bad sample can be metric lag"
+        done = verification.tick(T0 + timedelta(seconds=45))
     assert done[0]["state"] == "reopened" and done[0]["mttr_s"] is None
+
+
+def test_single_blip_does_not_reopen():
+    verification.start(kind="merge", alert_type="memory_high", started_at=T0, deployed_at=T0, window_s=40)
+    with probes(False, True, True):
+        verification.tick(T0 + timedelta(seconds=10))
+        verification.tick(T0 + timedelta(seconds=20))
+        done = verification.tick(T0 + timedelta(seconds=41))
+    assert done[0]["state"] == "resolved"
+
+
+def test_error_rate_probe_measures_only_the_deployed_release():
+    """After a rollback the bad release's errors linger in the 1m window: they must not count."""
+    queries, alerts = [], []
+    with patch.object(verification, "_deployed_release", return_value="stable"), \
+         patch("backend.live._prom", side_effect=lambda q: queries.append(q) or 0.0), \
+         patch("backend.live.alert_state", side_effect=lambda name, labels=None: alerts.append(labels) or "inactive"):
+        assert verification._probe("error_rate_high")["ok"] is True
+    assert 'release="stable"' in queries[0] and alerts == [{"release": "stable"}]
     assert verification.mttr_summary()["count"] == 0
 
 
@@ -78,6 +98,7 @@ def test_auto_rollback_on_regression(monkeypatch):
     verification.start(kind="merge", alert_type="memory_high", started_at=T0, deployed_at=T0, window_s=600)
     with probes(False), patch("agents.deployer.rollback_deployment", return_value={"rolled_back": True, "output": "ok"}) as rb:
         verification.tick(T0 + timedelta(seconds=15))
+        verification.tick(T0 + timedelta(seconds=30))
     rb.assert_called_once()
 
 
@@ -87,6 +108,7 @@ def test_auto_rollback_respects_kill_switch(monkeypatch):
     verification.start(kind="merge", alert_type="memory_high", started_at=T0, deployed_at=T0, window_s=600)
     with probes(False), patch("agents.deployer.rollback_deployment") as rb:
         verification.tick(T0 + timedelta(seconds=15))
+        verification.tick(T0 + timedelta(seconds=30))
     rb.assert_not_called()
 
 
