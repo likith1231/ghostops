@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import blast_radius, correlation, evidence, feedback, governance, mock_llm, postmortem, regression, replay, risk, shield
+from agents import blast_radius, correlation, evidence, feedback, fix_library, governance, mock_llm, postmortem, regression, replay, risk, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -151,7 +151,11 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None, f
         logger.warning("No source_files in failure_context — patch stage may fail.")
 
     with tracer.start_as_current_span("patch_generator"):
-        if MOCK_LLM:
+        learned = fix_library.suggest(str(diagnosis.get("root_cause", "")), source_files)
+        if learned:
+            # A human-approved fix that still applies: no model call needed.
+            patch = learned
+        elif MOCK_LLM:
             patch = mock_llm.generate_patch(diagnosis, source_files)
         else:
             patch_agent = build_patch_agent()

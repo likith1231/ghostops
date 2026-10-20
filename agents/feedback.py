@@ -79,11 +79,11 @@ def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, Any]:
     conn = sqlite3.connect(str(path))
     try:
         rows = conn.execute(
-            "SELECT id, pr_url, pr_state, alert_type, timestamp FROM incidents WHERE pr_url LIKE 'https://github.com/%' "
+            "SELECT id, pr_url, pr_state, alert_type, timestamp, root_cause, patch_diff FROM incidents WHERE pr_url LIKE 'https://github.com/%' "
             "AND (pr_state IS NULL OR pr_state NOT IN ('merged', 'superseded'))"
         ).fetchall()
         now = datetime.now(timezone.utc).isoformat()
-        for incident_id, url, old, alert_type, timestamp in rows:
+        for incident_id, url, old, alert_type, timestamp, root_cause, patch_diff in rows:
             counts["checked"] += 1
             state = pr_state(url, token)
             if state is None:
@@ -92,11 +92,20 @@ def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, Any]:
             if state != old:
                 counts["updated"] += 1
                 if state == "merged":
-                    counts["newly_merged"].append({"incident_id": incident_id, "pr_url": url, "alert_type": alert_type, "timestamp": timestamp})
+                    counts["newly_merged"].append({
+                        "incident_id": incident_id, "pr_url": url, "alert_type": alert_type, "timestamp": timestamp,
+                        "root_cause": root_cause, "patch_diff": patch_diff,
+                    })
             conn.execute("UPDATE incidents SET pr_state = ?, pr_checked_at = ? WHERE id = ?", (state, now, incident_id))
         conn.commit()
     finally:
         conn.close()
+    # A human approved these fixes: they become (part of) learned skills. After the commit
+    # above, so the library's own write doesn't wait on this transaction.
+    from agents import fix_library
+
+    for merged in counts["newly_merged"]:
+        fix_library.learn(merged["root_cause"] or "", merged["patch_diff"] or "", db_path=path)
     return counts
 
 

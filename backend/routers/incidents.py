@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
 import logging
-from agents import correlation, feedback, postmortem
+from agents import correlation, feedback, fix_library, postmortem
 from agents.knowledge_base import _DB_PATH, get_past_incidents
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
@@ -90,6 +90,12 @@ async def incidents_timeseries() -> list[dict]:
 async def incidents_correlated(limit: int = 20) -> list[dict]:
     """Incidents as GhostOps groups them: repeats and related alerts on one workload."""
     return correlation.incidents(min(limit, 100), db_path=_DB_PATH)
+
+
+@router.get("/fix-library")
+async def incidents_fix_library() -> list[dict]:
+    """Fixes learned from merged PRs; promoted ones are reused without an LLM call."""
+    return fix_library.entries(db_path=_DB_PATH)
 
 
 @router.get("/postmortems")
