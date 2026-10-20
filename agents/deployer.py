@@ -14,6 +14,7 @@ degradation pattern used throughout the GhostOps backend.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -296,6 +297,11 @@ def create_pr(
         # 5. Apply the diff
         # --------------------------------------------------------------
         _apply_diff(diff_text, failure_context, repo)
+        signed = patch.get("evidence")
+        if signed:
+            ev_path = repo / ".ghostops" / "evidence" / f"{branch_name.replace('/', '-')}.json"
+            ev_path.parent.mkdir(parents=True, exist_ok=True)
+            ev_path.write_text(json.dumps(signed, indent=2, sort_keys=True), encoding="utf-8")
         regression_test = patch.get("regression_test")
         if regression_test:
             test_path = repo / regression_test["path"]
@@ -338,6 +344,14 @@ def create_pr(
         risk = pipeline_result.get("risk")
         if risk:
             pr_body += "\n" + _risk_section(risk)
+        if patch.get("evidence"):
+            ev = patch["evidence"]
+            pr_body += (
+                "\n### 🔏 Signed evidence\n"
+                f"Bundle `.ghostops/evidence/{branch_name.replace('/', '-')}.json`, Ed25519 key `{ev['key_fingerprint']}` "
+                "(public key: `attestations/ghostops.pub`). Verify with:\n\n"
+                f"```\npython -m agents.evidence verify .ghostops/evidence/{branch_name.replace('/', '-')}.json\n```\n"
+            )
 
         pr_data = _create_github_pr(
             title=pr_title,

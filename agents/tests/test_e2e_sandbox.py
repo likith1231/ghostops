@@ -49,6 +49,14 @@ def test_scenario_is_fixed_and_validated_for_real(tmp_path, build, root_cause, f
     assert proof["failed_before"] and proof["passed_after"], proof
     assert result["patch"]["regression_test"]["path"].startswith("sample-app/test_ghostops_regression_")
     assert result["risk"]["level"] in ("low", "medium") and any(f["factor"] == "regression test" for f in result["risk"]["factors"])
+    # The fix carries signed evidence that verifies, and binds the exact validated diff.
+    from agents import evidence
+
+    signed = result["patch"]["evidence"]
+    key = evidence.signing_key(db.parent / "evidence.key")  # the run signed with the key beside its database
+    check = evidence.verify(signed, key.public_key(), diff=result["patch"]["diff"])
+    assert check == {"signature_valid": True, "patch_matches": True, "valid": True}
+    assert signed["bundle"]["gates"]["regression_test"]["failed_before"] is True
     logged = get_past_incidents(db_path=db)
     assert len(logged) == 1 and logged[0]["validation_passed"] == 1 and logged[0]["root_cause"] == root_cause
 

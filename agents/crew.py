@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import blast_radius, correlation, feedback, governance, mock_llm, regression, risk, shield
+from agents import blast_radius, correlation, evidence, feedback, governance, mock_llm, regression, risk, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -240,6 +240,18 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             "risk", risk_report["level"], f"score {risk_report['score']} → {risk_report['decision']}",
             run_ref=run_ref, evidence={"factors": risk_report["factors"]},
         )
+        # Proof-carrying fix: signed evidence of every gate this patch passed.
+        try:
+            signed = evidence.sign(evidence.build(
+                run_ref=run_ref, alert_type=str(failure_context.get("alert_type", "unknown")), diagnosis=diagnosis,
+                patch={**patch, "file_path": file_path}, validation=validation_result,
+                blast=blast_radius.analyze(diff_text, original_content), risk=risk_report, shield=shield_report,
+            ))
+            patch["evidence"] = signed
+            governance.record("evidence", "signed", f"key {signed['key_fingerprint']}", run_ref=run_ref,
+                              evidence={"diff_sha256": signed["bundle"]["patch"]["diff_sha256"]})
+        except Exception as exc:  # noqa: BLE001 - evidence must never block a validated fix
+            logger.error("Could not sign evidence: %s", exc)
 
     notify("deploy", "running", {})
     existing_pr = (
