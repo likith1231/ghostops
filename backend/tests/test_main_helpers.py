@@ -140,3 +140,11 @@ def test_alert_pipeline_gets_past_incidents_as_context():
         main._run_alert_pipeline({"labels": {"alertname": "SampleAppHighMemory", "pod": "p"}}, "p")
     ctx_fn.assert_called_once_with("memory_high")
     assert run.call_args.args[0]["past_incidents"] == past
+
+
+def test_alert_pipeline_fetches_deeper_log_for_replay():
+    with patch.object(main, "_fetch_pod_logs", return_value=["l"]) as logs, patch.object(main, "_query_prometheus_memory", return_value={}), \
+         patch.object(main, "run_pipeline", return_value={"validation_result": {"passed": True}}) as run:
+        main._run_alert_pipeline({"labels": {"alertname": "SampleAppHighMemory", "pod": "p"}}, "p")
+    assert any(c.kwargs.get("tail") == main.REPLAY_LOG_LINES for c in logs.call_args_list)
+    assert run.call_args.args[0]["replay_logs"] == ["l"]

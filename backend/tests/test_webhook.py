@@ -1,10 +1,21 @@
 from unittest.mock import patch
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from backend.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def fresh_db(tmp_path):
+    """Alerts are remembered for deduplication: give every test its own knowledge base."""
+    from agents import knowledge_base
+
+    with patch.object(knowledge_base, "_DB_PATH", tmp_path / "kb.db"):
+        yield
 
 
 def _alert(name="SampleAppHighMemory", status="firing", pod="sample-app-abc"):
@@ -25,10 +36,12 @@ def test_webhook_ignores_other_alerts():
     process.assert_not_called()
 
 
-def test_webhook_ignores_resolved_alerts():
+def test_webhook_resolved_alert_closes_incident_without_pipeline():
+    with patch("backend.main._process_alert"):
+        client.post("/webhook/alert", json={"alerts": [_alert()]})
     with patch("backend.main._process_alert") as process:
         response = client.post("/webhook/alert", json={"alerts": [_alert(status="resolved")]})
-    assert response.json()["action"] == "ignored"
+    assert response.json()["action"] == "resolved" and response.json()["incident"] == 1
     process.assert_not_called()
 
 
@@ -38,7 +51,9 @@ def test_webhook_starts_pipeline_for_firing_alert():
         response = client.post("/webhook/alert", json={"alerts": [alert]})
     assert response.status_code == 200
     assert response.json()["action"] == "pipeline_started"
-    process.assert_called_once_with(alert)
+    process.assert_called_once()
+    sent = process.call_args.args[0]
+    assert sent["labels"] == alert["labels"] and sent["_incident"] == response.json()["incident"]
 
 
 def test_only_one_pipeline_runs_at_a_time():
@@ -81,3 +96,30 @@ def test_webhook_and_simulate_share_one_lock():
     from backend.runs import pipeline_lock
 
     assert main._pipeline_lock is pipeline_lock
+
+
+def test_repeat_alert_does_not_start_another_pipeline():
+    with patch("backend.main._process_alert") as process:
+        first = client.post("/webhook/alert", json={"alerts": [_alert(pod="sample-app-6594c596d4-aaaaa")]}).json()
+        again = client.post("/webhook/alert", json={"alerts": [_alert(pod="sample-app-6594c596d4-bbbbb")]}).json()
+    assert first["action"] == "pipeline_started" and again["action"] == "duplicate"
+    assert again["incident"] == first["incident"]
+    assert process.call_count == 1
+
+
+def test_related_alert_is_correlated_not_processed():
+    with patch("backend.main._process_alert") as process:
+        client.post("/webhook/alert", json={"alerts": [_alert(pod="sample-app-6594c596d4-aaaaa")]})
+        r = client.post("/webhook/alert", json={"alerts": [{"status": "firing", "labels": {"alertname": "SampleAppHighErrorRate", "component": "sample-app"}}]}).json()
+    assert r["action"] == "correlated"
+    assert process.call_count == 1
+
+
+def test_correlated_incidents_endpoint():
+    with patch("backend.main._process_alert"):
+        client.post("/webhook/alert", json={"alerts": [_alert(pod="sample-app-6594c596d4-aaaaa")]})
+    from agents import knowledge_base
+
+    with patch("backend.routers.incidents._DB_PATH", knowledge_base._DB_PATH):
+        data = client.get("/api/incidents/correlated").json()
+    assert data[0]["workload"] == "sample-app" and data[0]["state"] == "open"

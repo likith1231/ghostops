@@ -21,6 +21,7 @@ from typing import Any
 
 import requests
 
+from agents import correlation
 from backend.runs import store
 
 logger = logging.getLogger("ghostops.backend.live")
@@ -70,7 +71,8 @@ def _core():
 
 def _pod_name() -> str:
     client = _core()
-    pods = client.CoreV1Api().list_namespaced_pod(NAMESPACE, label_selector=f"app={DEPLOYMENT}")
+    # The stable workload only: a fix canary (track=canary) shares the app label for traffic.
+    pods = client.CoreV1Api().list_namespaced_pod(NAMESPACE, label_selector=f"app={DEPLOYMENT},track!=canary")
     running = [p for p in pods.items if p.status.phase == "Running" and not p.metadata.deletion_timestamp]
     if not running:
         raise RuntimeError(f"no running {DEPLOYMENT} pod in namespace {NAMESPACE}")
@@ -102,11 +104,14 @@ def _prom(query: str) -> float | None:
     return float(result[0]["value"][1]) if result else None
 
 
-def alert_state(name: str = ALERT) -> str:
-    """inactive | pending | firing"""
+def alert_state(name: str = ALERT, labels: dict[str, str] | None = None) -> str:
+    """inactive | pending | firing (optionally only alerts carrying these labels)."""
     resp = requests.get(f"{PROMETHEUS_URL}/api/v1/alerts", timeout=5)
     resp.raise_for_status()
-    states = {a["state"] for a in resp.json()["data"]["alerts"] if a["labels"].get("alertname") == name}
+    states = {
+        a["state"] for a in resp.json()["data"]["alerts"]
+        if a["labels"].get("alertname") == name and all(a["labels"].get(k) == v for k, v in (labels or {}).items())
+    }
     return "firing" if "firing" in states else "pending" if "pending" in states else "inactive"
 
 
@@ -155,6 +160,9 @@ def run_live_leak(run_id: str) -> None:
         _step(run_id, live, limit=limit, alert=alert)
 
     try:
+        # A deliberate new incident: close any stale one whose "resolved" notice hasn't arrived yet,
+        # or the new alert would be treated as its duplicate.
+        correlation.resolve_alert({"alertname": ALERT, "component": DEPLOYMENT})
         # 0. Start clean: leaked memory or a still-firing alert would spoil the run.
         pod = _pod_name()
         leaked = int(json.loads(_pod_get(pod, "health")).get("leaked_objects", 0))
@@ -257,6 +265,7 @@ def run_live_canary(run_id: str) -> None:
         _step(run_id, live, alert=alert, requests=dict(stats))
 
     try:
+        correlation.resolve_alert({"alertname": CANARY_ALERT, "component": DEPLOYMENT})
         # 0. Start from a healthy release with no alert in flight.
         if alert_state(CANARY_ALERT) != "inactive":
             _step(run_id, live, step="resetting", reset=True)

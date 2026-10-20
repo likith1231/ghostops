@@ -44,7 +44,7 @@ def _execute(run_id: str, scenario: str) -> None:
     """Run one scenario through the pipeline; always releases the pipeline lock."""
     try:
         _, build_context = SCENARIOS[scenario]
-        context = build_context()
+        context = {**build_context(), "run_ref": run_id}
         # Source files stay server-side; the dashboard only needs the telemetry.
         store.set_context(
             run_id,

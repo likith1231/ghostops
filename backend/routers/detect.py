@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from agents import detectors as d
+from agents import shield
 
 router = APIRouter(prefix="/api", tags=["detect"])
 
@@ -76,7 +77,8 @@ async def detect(body: DetectRequest) -> dict:
         found.append(d.detect_hpa_flapping(body.replicas))
 
     detections = sorted((x for x in found if x), key=lambda x: (_SEVERITY_ORDER[x.severity], -x.confidence))
-    return {"detections": [x.to_dict() for x in detections]}
+    _, report = shield.sanitize({"logs": body.logs})
+    return {"detections": [x.to_dict() for x in detections], "shield": report}
 
 
 @router.get("/usecases")

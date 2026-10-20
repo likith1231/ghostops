@@ -21,6 +21,7 @@ def needs_docker():
         pytest.skip("Docker is not available")
 
 
+@pytest.mark.real_sandbox
 @pytest.mark.parametrize(
     "build,root_cause,file",
     [
@@ -43,6 +44,23 @@ def test_scenario_is_fixed_and_validated_for_real(tmp_path, build, root_cause, f
     assert result["patch"]["file_path"] == file
     assert result["validation_result"]["passed"] is True, result["validation_result"]["test_output"]
     assert result["pr_result"] == {"pr_created": False, "reason": "mock_mode"}
+    # The generated regression test was proven in the sandbox: fails before the fix, passes after.
+    proof = result["validation_result"]["regression_test"]
+    assert proof["failed_before"] and proof["passed_after"], proof
+    assert result["patch"]["regression_test"]["path"].startswith("sample-app/test_ghostops_regression_")
+    assert result["risk"]["level"] in ("low", "medium") and any(f["factor"] == "regression test" for f in result["risk"]["factors"])
+    # Counterfactual replay: the leak's recorded traffic reproduces it unpatched and not patched;
+    # the CI failure has no HTTP traffic to replay.
+    expected_replay = {"memory_leak": "reproduced_and_fixed"}.get(root_cause, "not_applicable")
+    assert result["validation_result"]["replay"]["verdict"] == expected_replay, result["validation_result"]["replay"]
+    # The fix carries signed evidence that verifies, and binds the exact validated diff.
+    from agents import evidence
+
+    signed = result["patch"]["evidence"]
+    key = evidence.signing_key(db.parent / "evidence.key")  # the run signed with the key beside its database
+    check = evidence.verify(signed, key.public_key(), diff=result["patch"]["diff"])
+    assert check == {"signature_valid": True, "patch_matches": True, "valid": True}
+    assert signed["bundle"]["gates"]["regression_test"]["failed_before"] is True
     logged = get_past_incidents(db_path=db)
     assert len(logged) == 1 and logged[0]["validation_passed"] == 1 and logged[0]["root_cause"] == root_cause
 

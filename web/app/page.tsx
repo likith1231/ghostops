@@ -10,9 +10,11 @@ import HowItWorks from "@/components/HowItWorks";
 import Incidents from "@/components/Incidents";
 import LiveRun from "@/components/LiveRun";
 import Nav from "@/components/Nav";
+import ProductionSection from "@/components/ProductionSection";
 import Section from "@/components/Section";
 import Stats from "@/components/Stats";
 import Ticker from "@/components/Ticker";
+import TrustSection from "@/components/TrustSection";
 import UseCases from "@/components/UseCases";
 import { useActivityFeed } from "@/lib/activity";
 import { useBackend } from "@/lib/useBackend";
@@ -22,8 +24,8 @@ const AiCore = dynamic(() => import("@/components/three/AiCore"), { ssr: false }
 const HERO_FACTS = [
   ["17", "catalogued failure types"],
   ["3", "fixed end-to-end"],
-  ["2", "automated safety gates"],
-  ["0", "self-merged PRs"],
+  ["6", "automated safety gates"],
+  ["0", "unreviewed production merges"],
 ];
 
 export default function Home() {
@@ -139,6 +141,24 @@ export default function Home() {
 
           <Section id="impact" eyebrow="Impact" title="Every run, on the record." lede="Read straight from the GhostOps knowledge base.">
             <Stats refreshKey={refreshKey} />
+          </Section>
+
+          <Section
+            id="production"
+            eyebrow="Production"
+            title="Fixed means healthy in production."
+            lede="Deployed fixes are watched on the same signal that fired the alert, attacked with chaos before they count, and every real incident is priced."
+          >
+            <ProductionSection refreshKey={refreshKey} />
+          </Section>
+
+          <Section
+            id="trust"
+            eyebrow="Trust"
+            title="Every decision, on a tamper-evident record."
+            lede="What GhostOps decided and why, chained by hashes; how alerts were grouped; and the fixes it learned from people."
+          >
+            <TrustSection refreshKey={refreshKey} />
           </Section>
 
           <Section

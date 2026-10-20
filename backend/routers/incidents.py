@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
 import logging
-from agents import feedback
+from agents import correlation, feedback, fix_library, postmortem
 from agents.knowledge_base import _DB_PATH, get_past_incidents
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
@@ -86,6 +86,39 @@ async def incidents_timeseries() -> list[dict]:
         return []
 
 
+@router.get("/correlated")
+async def incidents_correlated(limit: int = 20) -> list[dict]:
+    """Incidents as GhostOps groups them: repeats and related alerts on one workload."""
+    return correlation.incidents(min(limit, 100), db_path=_DB_PATH)
+
+
+@router.get("/fix-library")
+async def incidents_fix_library() -> list[dict]:
+    """Fixes learned from merged PRs; promoted ones are reused without an LLM call."""
+    return fix_library.entries(db_path=_DB_PATH)
+
+
+@router.get("/costs")
+async def incidents_costs(limit: int = 20) -> dict:
+    """What real incidents cost (measured from Prometheus) and what fixing them automatically saved."""
+    from backend import cost
+
+    return cost.summary(min(limit, 100))
+
+
+@router.get("/postmortems")
+async def incidents_postmortems(limit: int = 20) -> list[dict]:
+    return postmortem.listing(min(limit, 100), db_path=_DB_PATH)
+
+
+@router.get("/postmortems/{run_ref}")
+async def incidents_postmortem(run_ref: str) -> dict:
+    report = postmortem.get(run_ref, db_path=_DB_PATH)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no postmortem for this run")
+    return report
+
+
 @router.get("/feedback")
 async def incidents_feedback() -> dict:
     """What human reviewers did with GhostOps' PRs, as last synced from GitHub."""
@@ -95,8 +128,28 @@ async def incidents_feedback() -> dict:
 @router.post("/feedback/sync")
 def incidents_feedback_sync() -> dict:
     """Ask GitHub for the current state of every undecided PR, then report."""
+    from backend import verification
+
     counts = feedback.sync_pr_outcomes(db_path=_DB_PATH)
+    for merged in counts.get("newly_merged", []):
+        verification.start_for_merge(merged)
     return {**counts, **feedback.acceptance(db_path=_DB_PATH)}
+
+
+@router.get("/verifications")
+async def incidents_verifications(limit: int = 20) -> list[dict]:
+    """Fixes being watched in production, and their verdicts."""
+    from backend import verification
+
+    return verification.listing(min(limit, 100))
+
+
+@router.get("/mttr")
+async def incidents_mttr() -> dict:
+    """Real MTTR: alert start -> verified healthy in production."""
+    from backend import verification
+
+    return verification.mttr_summary()
 
 
 @router.get("/{incident_id}")

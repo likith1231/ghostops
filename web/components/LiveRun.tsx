@@ -6,6 +6,7 @@ import { STAGES, api, streamRun, type Activity, type LiveProgress, type LiveStat
 import type { BackendState } from "@/lib/useBackend";
 import CodeDiff from "./CodeDiff";
 import MemoryChart from "./MemoryChart";
+import PostmortemButton from "./PostmortemButton";
 import OfflineNotice from "./OfflineNotice";
 import type { NodeState } from "./three/PipelineScene";
 
@@ -13,6 +14,66 @@ const PipelineScene = dynamic(() => import("./three/PipelineScene"), {
   ssr: false,
   loading: () => <div className="grid h-full place-items-center font-mono text-xs text-mist">loading scene…</div>,
 });
+
+const GATE_TONE = (ok: boolean | null) => (ok === null ? "text-mist" : ok ? "text-ok" : "text-bad");
+
+/** Every gate the fix went through, beyond the sandbox's own test run. */
+function GateList({ validation, patch }: { validation: Validation; patch?: Patch }) {
+  const rt = validation.regression_test;
+  const rows: [string, boolean | null, string][] = [];
+  if (rt) rows.push(["Regression test", rt.verified, `${rt.path.split("/").pop()}: fails before ${rt.failed_before ? "✓" : "✕"} · passes after ${rt.passed_after ? "✓" : "✕"}`]);
+  if (validation.replay) {
+    const v = validation.replay.verdict;
+    rows.push(["Counterfactual replay", v === "reproduced_and_fixed" ? true : v === "not_fixed" ? false : null, validation.replay.summary]);
+  }
+  if (validation.fix_canary) {
+    const v = validation.fix_canary.verdict;
+    rows.push(["Canary of the fix", v === "passed" || v === "promoted" ? true : v === "not_applicable" ? null : false, validation.fix_canary.summary]);
+  }
+  if (patch?.source === "fix_library") rows.push(["Fix library", true, "a human-approved fix reused without an AI call"]);
+  if (!rows.length) return null;
+  return (
+    <ul className="space-y-1.5 border-t border-white/5 pt-3 text-xs">
+      {rows.map(([name, ok, detail]) => (
+        <li key={name} className="flex gap-2">
+          <span className={`w-4 shrink-0 ${GATE_TONE(ok)}`}>{ok === null ? "–" : ok ? "✓" : "✕"}</span>
+          <span className="shrink-0 font-semibold text-white/85">{name}</span>
+          <span className="truncate text-mist" title={detail}>{detail}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const LEVEL_TONE: Record<string, string> = { low: "bg-ok/15 text-ok", medium: "bg-warn/15 text-warn", high: "bg-bad/15 text-bad" };
+const DECISION_TEXT: Record<string, string> = {
+  auto_merge_staging: "auto-merge to staging",
+  open_pr: "PR for human review",
+  open_pr_and_page: "PR + page a human",
+};
+
+/** The fix's risk score, its breakdown, and the autonomy it earned. */
+function RiskPanel({ risk, pr }: { risk: NonNullable<NonNullable<Run["result"]>["risk"]>; pr?: PrResult }) {
+  return (
+    <details className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs">
+      <summary className="flex cursor-pointer flex-wrap items-center gap-2">
+        <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ${LEVEL_TONE[risk.level]}`}>risk {risk.level} · {risk.score}/100</span>
+        <span className="text-white/80">→ {DECISION_TEXT[risk.decision] ?? risk.decision}</span>
+        {pr?.auto_merged && <span className="text-ok">merged into staging</span>}
+        {pr?.paged && <span className="text-bad">human paged</span>}
+      </summary>
+      <ul className="mt-2 space-y-1">
+        {risk.factors.map((f) => (
+          <li key={f.factor} className="flex gap-2 font-mono">
+            <span className={`w-9 shrink-0 text-right ${f.points > 0 ? "text-bad" : f.points < 0 ? "text-ok" : "text-mist"}`}>{f.points > 0 ? `+${f.points}` : f.points}</span>
+            <span className="text-white/80">{f.factor}</span>
+            <span className="truncate text-mist">{f.why}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 /** Minimum time each pipeline step stays on screen. */
 const STEP_MS = 1100;
@@ -370,6 +431,12 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
                 <span className="rounded-md bg-white/5 px-2 py-0.5 font-mono text-xs text-mist">confidence: {String(diagnosis.confidence)}</span>
               </div>
               <p>{diagnosis.summary}</p>
+              {!!run?.result?.shield?.quarantined && (
+                <p className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  🛡 Prompt-injection shield quarantined {run.result.shield.quarantined} log line(s) before the model saw them (
+                  {[...new Set(run.result.shield.findings.flatMap((f) => f.categories))].join(", ")}).
+                </p>
+              )}
               <ul className="space-y-1 font-mono text-[12px] text-mist">
                 {(diagnosis.evidence ?? []).slice(0, 3).map((e, i) => (
                   <li key={i} className="truncate">› {typeof e === "string" ? e : e.reference}</li>
@@ -408,6 +475,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
                   {validation.failing_tests.map((t) => <li key={t}>✕ {t}</li>)}
                 </ul>
               )}
+              <GateList validation={validation} patch={patch} />
               {validation.test_output && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-mist hover:text-white">sandbox output</summary>
@@ -438,6 +506,20 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
                 <span className="font-semibold text-warn">Left for a human.</span> There was no recent release GhostOps could safely roll
                 back, so nothing was changed automatically.
               </p>
+            ) : pr.reason === "duplicate_of_open_pr" ? (
+              <p>
+                <span className="font-semibold text-arc">Already being fixed.</span> An open PR addresses the same root cause on the same
+                file, so no duplicate was opened:{" "}
+                <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-arc hover:underline">{pr.pr_url}</a>
+              </p>
+            ) : pr.reason === "autonomy_paused" ? (
+              <p>
+                <span className="font-semibold text-bad">Kill switch on.</span> The fix is validated, but automatic actions are paused.
+              </p>
+            ) : pr.reason === "already_remediated" ? (
+              <p>
+                <span className="font-semibold text-ok">Already remediated.</span> The failing release is no longer deployed; nothing to undo.
+              </p>
             ) : pr.reason === "mock_mode" ? (
               <p>
                 Validated fix ready. In mock mode GhostOps holds the PR instead of opening one; set{" "}
@@ -449,7 +531,16 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
           ) : (
             <Placeholder />
           )}
-          <p className="text-xs text-mist">GhostOps never merges its own PRs — a human always approves.</p>
+          {run?.result?.risk && <RiskPanel risk={run.result.risk} pr={pr} />}
+          <div className="flex flex-wrap items-center gap-2">
+            {run?.result?.postmortem && run.status !== "running" && <PostmortemButton runRef={run.id} />}
+            {patch?.evidence && (
+              <span className="rounded-full bg-ok/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-ok" title={`Ed25519 key ${patch.evidence.key_fingerprint}`}>
+                🔏 signed evidence
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-mist">Only low-risk fixes are auto-merged, and only into staging; the kill switch stops all of it.</p>
         </Card>
       </div>
     </div>

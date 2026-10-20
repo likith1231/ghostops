@@ -183,3 +183,11 @@ class TestGetPastIncidents:
     def test_returns_empty_list_for_missing_db(self, tmp_path: Path):
         incidents = get_past_incidents(db_path=tmp_path / "nonexistent.db")
         assert incidents == []
+
+
+def test_tests_never_use_the_real_database():
+    """conftest.py points the knowledge base at a temp file for the whole run."""
+    from agents import knowledge_base
+
+    assert "ghostops-tests-" in str(knowledge_base._DB_PATH)
+    assert not str(knowledge_base._DB_PATH).endswith("agents/data/incidents.db")

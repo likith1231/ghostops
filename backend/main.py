@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 import os
 import sys
 import time
@@ -40,6 +41,7 @@ load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Now that the path is set up, import the agent pipeline.
 from agents.crew import run_pipeline  # noqa: E402
+from agents import correlation, governance  # noqa: E402
 from agents.knowledge_base import init_db, past_incident_context  # noqa: E402
 
 # Initialise the SQLite knowledge base (creates DB + table if needed).
@@ -59,6 +61,8 @@ SAMPLE_APP_TESTS: str = os.getenv(
     str(_PROJECT_ROOT / "sample-app" / "test_app.py"),
 )
 POD_LOG_LINES: int = int(os.getenv("POD_LOG_LINES", "20"))
+# A deeper slice of the access log, for counterfactual replay of the incident's traffic.
+REPLAY_LOG_LINES: int = int(os.getenv("REPLAY_LOG_LINES", "500"))
 POD_NAMESPACE: str = os.getenv("POD_NAMESPACE", "default")
 MEMORY_HISTORY_S: int = int(os.getenv("MEMORY_HISTORY_S", "300"))
 # B1 (memory leak -> AI fix) and C1 (canary regression -> rollback).
@@ -107,10 +111,21 @@ trace.set_tracer_provider(provider)
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Start the watcher that verifies deployed fixes in production (post-merge verification, MTTR)."""
+    if os.getenv("GHOSTOPS_DISABLE_WATCHER", "") not in ("1", "true", "yes"):
+        from backend import verification
+
+        verification.run_watcher()
+    yield
+
+
 app = FastAPI(
     title="GhostOps Ingestion Service",
     description="Receives Alertmanager webhooks and feeds the AI agent pipeline.",
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 FastAPIInstrumentor.instrument_app(app)
@@ -127,7 +142,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Kubernetes log fetcher
 # ---------------------------------------------------------------------------
-def _fetch_pod_logs(pod_name: str, namespace: str = POD_NAMESPACE) -> list[str]:
+def _fetch_pod_logs(pod_name: str, namespace: str = POD_NAMESPACE, tail: int | None = None) -> list[str]:
     """Fetch the last *POD_LOG_LINES* lines from *pod_name* via the
     Kubernetes Python client.
 
@@ -148,7 +163,7 @@ def _fetch_pod_logs(pod_name: str, namespace: str = POD_NAMESPACE) -> list[str]:
         log_text: str = v1.read_namespaced_pod_log(
             name=pod_name,
             namespace=namespace,
-            tail_lines=POD_LOG_LINES,
+            tail_lines=tail or POD_LOG_LINES,
         )
         lines = [line for line in log_text.strip().splitlines() if line]
         logger.info(
@@ -280,7 +295,7 @@ def _read_source_file(path: str) -> dict[str, str]:
 # Pipeline runner (background)
 # ---------------------------------------------------------------------------
 # One incident at a time (shared with /api/simulate): the deployer switches git branches to open the PR.
-from backend import canary, live  # noqa: E402
+from backend import canary, cost, live  # noqa: E402
 from backend.runs import pipeline_lock as _pipeline_lock  # noqa: E402
 from backend.runs import store as run_store  # noqa: E402
 
@@ -311,12 +326,15 @@ def _run_canary_alert(alert: dict[str, Any]) -> None:
     run_id = live.claim_waiting_run() or run_store.create(
         "live", f"Live alert: {canary.ALERT} (release {labels.get('release', '?')})"
     )["id"]
+    if alert.get("_incident"):
+        correlation.attach_run(alert["_incident"], run_id)
     run_store.set_context(run_id, {"alert_type": "error_rate_high", "metrics": {}, "logs": [alert.get("annotations", {}).get("summary", "")]})
     try:
         result = canary.run_canary_pipeline(
-            alert, on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data)
+            alert, on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data), run_ref=run_id
         )
         passed = result["validation_result"].get("passed") is True
+        result["cost"] = cost.record(run_ref=run_id, alert_type="error_rate_high", started_at=alert.get("startsAt"))
         run_store.finish(run_id, "passed" if passed else "failed", result=result)
     except Exception as exc:  # noqa: BLE001
         logger.error("Canary remediation failed: %s", exc, exc_info=True)
@@ -364,16 +382,27 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
     run_id = live.claim_waiting_run() or run_store.create(
         "live", f"Live alert: {alert.get('labels', {}).get('alertname', 'alert')} on {pod_name or 'cluster'}"
     )["id"]
+    failure_context["run_ref"] = run_id
+    failure_context["started_at"] = alert.get("startsAt")
+    if pod_name:
+        failure_context["replay_logs"] = _fetch_pod_logs(pod_name, tail=REPLAY_LOG_LINES)
+    if alert.get("_incident"):
+        correlation.attach_run(alert["_incident"], run_id)
     run_store.set_context(
         run_id,
         {"alert_type": failure_context["alert_type"], "metrics": metrics, "logs": logs[-20:]},
     )
     try:
+        from backend import fix_canary
+
         pipeline_result = run_pipeline(
             failure_context,
             on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data),
+            # Real alerts canary the validated fix on the cluster before it is delivered.
+            fix_canary=fix_canary.run if os.getenv("FIX_CANARY", "1") in ("1", "true", "yes") else None,
         )
         passed = pipeline_result.get("validation_result", {}).get("passed") is True
+        pipeline_result["cost"] = cost.record(run_ref=run_id, alert_type="memory_high", started_at=alert.get("startsAt"))
         run_store.finish(run_id, "passed" if passed else "failed", result=pipeline_result)
 
         # ---- Step E: Log the result clearly ------------------------
@@ -464,6 +493,12 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks) -> 
         alert_status = alert.get("status", "")
         pod_name = labels.get("pod", "")
 
+        # ---- A resolved alert closes its incident -----------------------
+        if alert_name in HANDLED_ALERTS and alert_status == "resolved":
+            closed = correlation.resolve_alert(labels)
+            results.append({"alert": alert_name, "status": alert_status, "action": "resolved", "incident": closed})
+            continue
+
         # ---- Skip non-actionable alerts --------------------------------
         if alert_name not in HANDLED_ALERTS or alert_status != "firing":
             logger.info(
@@ -476,8 +511,19 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks) -> 
             })
             continue
 
+        # ---- Repeats and related alerts join the open incident ----------
+        verdict = correlation.classify_alert(labels)
+        if verdict["action"] != "new":
+            governance.record(
+                "dedupe", verdict["action"], f"{alert_name} joined incident #{verdict['incident']['id']}",
+                run_ref=verdict["incident"].get("run_ref"), evidence={"incident": verdict["incident"]},
+            )
+            results.append({"alert": alert_name, "pod": pod_name, "action": verdict["action"], "incident": verdict["incident"]["id"]})
+            continue
+
+        alert["_incident"] = verdict["incident"]["id"]
         background_tasks.add_task(_process_alert, alert)
-        results.append({"alert": alert_name, "pod": pod_name, "action": "pipeline_started"})
+        results.append({"alert": alert_name, "pod": pod_name, "action": "pipeline_started", "incident": verdict["incident"]["id"]})
 
     # The pipeline runs after this response. If there was exactly one alert,
     # return it at the top level for convenience; otherwise wrap in a list.
@@ -547,7 +593,9 @@ async def metrics() -> Response:
 # ---------------------------------------------------------------------------
 # Incident API Router
 # ---------------------------------------------------------------------------
-from backend.routers import detect, incidents, runs
+from backend.routers import detect, governance as governance_router, incidents, runs
+
+app.include_router(governance_router.router)
 
 app.include_router(incidents.router)
 app.include_router(runs.router)

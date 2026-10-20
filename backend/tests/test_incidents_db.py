@@ -136,3 +136,20 @@ def test_feedback_sync_endpoint(db):
 
 def test_feedback_route_not_shadowed_by_incident_id():
     assert client.get("/api/incidents/feedback").status_code == 200
+
+
+def test_postmortem_endpoints(db):
+    from agents import postmortem
+
+    postmortem.write(run_ref="run-x", alert_type="memory_high", diagnosis={"root_cause": "memory_leak"}, patch={}, validation={"passed": True}, outcome={}, db_path=db)
+    assert client.get("/api/incidents/postmortems").json()[0]["run_ref"] == "run-x"
+    assert "# Postmortem: memory leak" in client.get("/api/incidents/postmortems/run-x").json()["markdown"]
+    assert client.get("/api/incidents/postmortems/nope").status_code == 404
+
+
+def test_fix_library_endpoint(db):
+    from agents import fix_library
+
+    fix_library.learn("ci_test_failure", "--- a/sample-app/m.py\n+++ b/sample-app/m.py\n-a\n+b\n", db_path=db)
+    data = client.get("/api/incidents/fix-library").json()
+    assert data[0]["file_name"] == "m.py" and data[0]["promoted"] is False

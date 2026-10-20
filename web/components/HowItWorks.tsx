@@ -12,8 +12,11 @@ const STEPS = [
 
 const GATES = [
   ["Policy gate", "Patches may only touch allow-listed paths; manifests need limits and can't be privileged."],
-  ["Sandbox gate", "The project's real test suite must pass in an isolated container with no network and a 256 MB cap."],
-  ["Human gate", "The result is a pull request. GhostOps never merges its own changes."],
+  ["Blast-radius gate", "Rejects patches that are too big, weaken tests, add dependencies, touch secrets, or add eval, shell or network calls."],
+  ["Sandbox gate", "The real test suite passes in an isolated container, plus a new regression test that fails before the fix and passes after."],
+  ["Replay & canary", "The incident's real traffic is replayed against the fix, then a canary pod proves it on the cluster."],
+  ["Risk-based autonomy", "Low risk auto-merges to staging, medium opens a PR, high pages a human. Every step is signed and audited."],
+  ["Human & kill switch", "Production stays under human control: one switch pauses every automatic action."],
 ];
 
 export default function HowItWorks() {

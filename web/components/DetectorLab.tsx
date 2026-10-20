@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { api, type Detection } from "@/lib/api";
+import { api, type Detection, type ShieldReport } from "@/lib/api";
 
 const PRESETS: { label: string; body: Record<string, unknown> }[] = [
   {
@@ -40,12 +40,15 @@ export default function DetectorLab({ online }: { online: boolean | null }) {
   const [logs, setLogs] = useState("");
   const [results, setResults] = useState<Detection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shield, setShield] = useState<ShieldReport | null>(null);
 
   const run = async (payload: Record<string, unknown>) => {
     setBody(payload);
     setError(null);
     try {
-      setResults((await api.detect(payload)).detections);
+      const res = await api.detect(payload);
+      setResults(res.detections);
+      setShield(res.shield ?? null);
     } catch (e) {
       setResults(null);
       setError(e instanceof Error ? e.message : String(e));
@@ -97,6 +100,16 @@ export default function DetectorLab({ online }: { online: boolean | null }) {
 
       <div className="lg:col-span-3">
         {error && <div className="mb-3 rounded-xl border border-bad/30 bg-bad/10 p-3 text-sm text-bad">{error}</div>}
+        {shield && shield.findings.length > 0 && (
+          <div className="mb-3 rounded-2xl border border-warn/30 bg-warn/10 p-4 text-sm">
+            <div className="font-semibold text-warn">🛡 Prompt-injection shield: {shield.quarantined} line(s) quarantined</div>
+            <ul className="mt-2 space-y-1 font-mono text-[12px] text-white/75">
+              {shield.findings.map((f) => (
+                <li key={f.where} className="truncate">› {f.where}: {f.categories.join(", ")} — {f.excerpt}</li>
+              ))}
+            </ul>
+          </div>
+        )}
         {results === null ? (
           <div className="glass grid h-full min-h-56 place-items-center rounded-2xl p-6 text-center text-sm text-mist">
             Pick a scenario. These detectors are deterministic Python — no LLM, no API key.

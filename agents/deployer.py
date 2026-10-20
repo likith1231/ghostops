@@ -14,6 +14,7 @@ degradation pattern used throughout the GhostOps backend.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -224,6 +225,7 @@ def create_pr(
     pipeline_result: dict[str, Any],
     failure_context: dict[str, Any],
     repo_path: str | Path | None = None,
+    base: str | None = None,
 ) -> dict[str, Any]:
     """Create a GitHub PR for a validated patch.
 
@@ -295,6 +297,16 @@ def create_pr(
         # 5. Apply the diff
         # --------------------------------------------------------------
         _apply_diff(diff_text, failure_context, repo)
+        signed = patch.get("evidence")
+        if signed:
+            ev_path = repo / ".ghostops" / "evidence" / f"{branch_name.replace('/', '-')}.json"
+            ev_path.parent.mkdir(parents=True, exist_ok=True)
+            ev_path.write_text(json.dumps(signed, indent=2, sort_keys=True), encoding="utf-8")
+        regression_test = patch.get("regression_test")
+        if regression_test:
+            test_path = repo / regression_test["path"]
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_path.write_text(regression_test["content"], encoding="utf-8")
 
         # --------------------------------------------------------------
         # 6. Commit
@@ -329,11 +341,23 @@ def create_pr(
 
         pr_title = _build_commit_message(diagnosis).split("\n")[0]
 
+        risk = pipeline_result.get("risk")
+        if risk:
+            pr_body += "\n" + _risk_section(risk)
+        if patch.get("evidence"):
+            ev = patch["evidence"]
+            pr_body += (
+                "\n### 🔏 Signed evidence\n"
+                f"Bundle `.ghostops/evidence/{branch_name.replace('/', '-')}.json`, Ed25519 key `{ev['key_fingerprint']}` "
+                "(public key: `attestations/ghostops.pub`). Verify with:\n\n"
+                f"```\npython -m agents.evidence verify .ghostops/evidence/{branch_name.replace('/', '-')}.json\n```\n"
+            )
+
         pr_data = _create_github_pr(
             title=pr_title,
             body=pr_body,
             head=branch_name,
-            base=original_branch,
+            base=base or original_branch,
         )
 
         logger.info(
@@ -625,3 +649,71 @@ def rollback_deployment(deployment: str, namespace: str = "default") -> dict[str
         return {"rolled_back": False, "output": output}
     logger.info("Rolled back %s/%s: %s", namespace, deployment, output)
     return {"rolled_back": True, "output": output}
+
+
+# ---------------------------------------------------------------------------
+# Graduated autonomy: risk in the PR, labels, auto-merge, paging
+# ---------------------------------------------------------------------------
+def _risk_section(risk: dict[str, Any]) -> str:
+    rows = "\n".join(f"| {f['factor']} | {f['points']:+d} | {f['why']} |" for f in risk.get("factors", []))
+    return (
+        f"### ⚖️ Risk: {risk.get('level', '?')} ({risk.get('score', '?')}/100) → `{risk.get('decision', '?')}`\n\n"
+        "| Factor | Points | Why |\n|---|---|---|\n" + rows + "\n"
+    )
+
+
+def _gh(method: str, path: str, json_body: dict[str, Any] | None = None) -> requests.Response:
+    owner, repo_name = GITHUB_REPO.split("/", 1)
+    return requests.request(
+        method,
+        f"https://api.github.com/repos/{owner}/{repo_name}{path}",
+        headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {GITHUB_TOKEN}", "X-GitHub-Api-Version": "2022-11-28"},
+        json=json_body,
+        timeout=30,
+    )
+
+
+def branch_exists(branch: str) -> bool:
+    try:
+        return _gh("GET", f"/branches/{branch}").status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def label_pr(number: int, labels: list[str]) -> bool:
+    try:
+        return _gh("POST", f"/issues/{number}/labels", {"labels": labels}).status_code in (200, 201)
+    except requests.RequestException:
+        return False
+
+
+def merge_pr(number: int, method: str = "squash") -> dict[str, Any]:
+    """Merge a PR (used only for low-risk fixes into staging). Never raises."""
+    try:
+        resp = _gh("PUT", f"/pulls/{number}/merge", {"merge_method": method})
+    except requests.RequestException as exc:
+        return {"merged": False, "reason": str(exc)}
+    if resp.status_code == 200:
+        return {"merged": True, "sha": resp.json().get("sha")}
+    return {"merged": False, "reason": f"GitHub {resp.status_code}: {resp.text[:200]}"}
+
+
+def page_human(summary: str, details: dict[str, Any]) -> dict[str, Any]:
+    """Notify a person through PAGER_WEBHOOK_URL (Slack, Discord or any JSON webhook). Never raises."""
+    url = os.getenv("PAGER_WEBHOOK_URL", "")
+    if not url:
+        return {"paged": False, "reason": "PAGER_WEBHOOK_URL not set"}
+    payload = {"text": f"🚨 GhostOps needs a human: {summary}", "content": f"🚨 GhostOps needs a human: {summary}", "details": details}
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        return {"paged": resp.status_code < 300, "status": resp.status_code}
+    except requests.RequestException as exc:
+        return {"paged": False, "reason": str(exc)}
+
+
+def comment_pr(number: int, body: str) -> bool:
+    """Add a comment to a PR (the postmortem). Never raises."""
+    try:
+        return _gh("POST", f"/issues/{number}/comments", {"body": body[:65000]}).status_code == 201
+    except requests.RequestException:
+        return False
