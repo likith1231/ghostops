@@ -106,6 +106,6 @@ def test_kill_switch_stops_pr_creation(db):
 def test_pipeline_decisions_are_audited_with_run_ref(db):
     _pipeline(False, db)
     trail = governance.entries(db_path=db)
-    assert [e["action"] for e in reversed(trail) if e["action"] != "regression_test"] == ["diagnose", "patch", "validate", "risk", "evidence", "open_pr"]
+    assert [e["action"] for e in reversed(trail) if e["action"] not in ("regression_test", "replay")] == ["diagnose", "patch", "validate", "risk", "evidence", "open_pr"]
     assert {e["run_ref"] for e in trail} == {"run-7"}
     assert governance.verify_chain(db_path=db)["valid"] is True

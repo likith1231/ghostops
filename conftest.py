@@ -28,6 +28,7 @@ def _no_regression_sandbox(request, monkeypatch):
         from agents import crew
     except Exception:  # noqa: BLE001 - modules that never import the pipeline
         return
+    monkeypatch.setattr(crew, "run_replay", lambda *a, **k: {"verdict": "not_applicable", "summary": "faked in unit tests"})
     monkeypatch.setattr(
         crew,
         "verify_regression_test",

@@ -49,6 +49,10 @@ def test_scenario_is_fixed_and_validated_for_real(tmp_path, build, root_cause, f
     assert proof["failed_before"] and proof["passed_after"], proof
     assert result["patch"]["regression_test"]["path"].startswith("sample-app/test_ghostops_regression_")
     assert result["risk"]["level"] in ("low", "medium") and any(f["factor"] == "regression test" for f in result["risk"]["factors"])
+    # Counterfactual replay: the leak's recorded traffic reproduces it unpatched and not patched;
+    # the CI failure has no HTTP traffic to replay.
+    expected_replay = {"memory_leak": "reproduced_and_fixed"}.get(root_cause, "not_applicable")
+    assert result["validation_result"]["replay"]["verdict"] == expected_replay, result["validation_result"]["replay"]
     # The fix carries signed evidence that verifies, and binds the exact validated diff.
     from agents import evidence
 

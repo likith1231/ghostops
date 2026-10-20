@@ -38,6 +38,7 @@ def score(
     acceptance_rate: float | None = None,
     occurrences: int = 1,
     regression_test: bool = False,
+    replay_verdict: str | None = None,
 ) -> dict[str, Any]:
     """Risk of letting this fix through, with the factors that produced it."""
     factors: list[dict[str, Any]] = []
@@ -75,6 +76,8 @@ def score(
     add("test evidence", 0 if tests >= 5 else 10 if tests >= 1 else 25, f"{tests} test(s) ran in the sandbox")
     if regression_test:
         add("regression test", -10, "a test that fails before and passes after the fix")
+    if replay_verdict == "reproduced_and_fixed":
+        add("counterfactual replay", -10, "the incident's real traffic reproduced the bug and the fix removed it")
 
     shield_risk = (shield or {}).get("risk", "none")
     if shield_risk in ("elevated", "high"):

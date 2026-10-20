@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import blast_radius, correlation, evidence, feedback, governance, mock_llm, regression, risk, shield
+from agents import blast_radius, correlation, evidence, feedback, governance, mock_llm, regression, replay, risk, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -35,6 +35,7 @@ from agents.validation_officer import (
     build_validation_agent,
     build_validation_task,
     interpret_sandbox_result,
+    _run_tests_in_sandbox,
     run_validation_checks,
     verify_regression_test,
 )
@@ -212,6 +213,14 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
                     f"{proof['path']}: failed before={proof['failed_before']}, passed after={proof['passed_after']}",
                     run_ref=failure_context.get("run_ref"),
                 )
+        # Counterfactual replay: the incident's real traffic, before and after the fix.
+        if validation_result.get("passed") is True:
+            replayed = run_replay(file_path, original_content, diff_text, extra_files, failure_context.get("replay_logs") or failure_context.get("logs", []))
+            validation_result["replay"] = replayed
+            governance.record("replay", replayed["verdict"], replayed["summary"], run_ref=failure_context.get("run_ref"))
+            if replayed["verdict"] == "not_fixed":
+                validation_result["passed"] = False
+                validation_result["summary"] = f"Counterfactual replay: {replayed['summary']}"
         span.set_attribute("validation_passed", validation_result.get("passed", False))
         logger.info("Validation passed: %s", validation_result.get("passed"))
     governance.record(
@@ -235,6 +244,7 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             blast=blast_radius.analyze(diff_text, original_content), shield=shield_report,
             acceptance_rate=rate, occurrences=int(failure_context.get("occurrences", 1) or 1),
             regression_test=bool(patch.get("regression_test")),
+            replay_verdict=(validation_result.get("replay") or {}).get("verdict"),
         )
         governance.record(
             "risk", risk_report["level"], f"score {risk_report['score']} → {risk_report['decision']}",
@@ -309,6 +319,11 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         "shield": shield_report,
         "risk": risk_report,
     }
+
+
+def run_replay(file_path, original, diff, extra_files, logs) -> dict[str, Any]:
+    """Counterfactual replay in the Docker sandbox (patched out in unit tests)."""
+    return replay.replay(file_path, original, diff, extra_files, logs, _run_tests_in_sandbox)
 
 
 def _deliver(diagnosis, patch, validation_result, risk_report, failure_context, run_ref, create_pr) -> dict[str, Any]:

@@ -119,6 +119,7 @@ def _run_tests_in_sandbox(
     diff_text: str,
     extra_files: dict[str, str] | None = None,
     test_target: str | None = None,
+    command: list[str] | None = None,
 ) -> dict:
     """Apply *diff_text* to *original_content* and run ``pytest`` on it inside a
     throwaway Docker container.
@@ -160,7 +161,7 @@ def _run_tests_in_sandbox(
         _ensure_sandbox_image(client)
         container = client.containers.create(
             image=SANDBOX_IMAGE,
-            command=["python", "-m", "pytest", "-v", "--tb=short", "-p", "no:cacheprovider", *([Path(test_target).name] if test_target else [])],
+            command=command or ["python", "-m", "pytest", "-v", "--tb=short", "-p", "no:cacheprovider", *([Path(test_target).name] if test_target else [])],
             working_dir=workdir,
             environment={"PYTHONPATH": workdir, "PYTHONDONTWRITEBYTECODE": "1"},
             network_mode="none",           # no network access
