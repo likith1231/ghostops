@@ -260,3 +260,13 @@ def test_memory_queries_scoped_to_current_pod(fresh_store):
         for p in patches:
             p.stop()
     assert seen and all('pod="sample-app-1"' in q for q in seen)
+
+
+def test_live_run_closes_stale_incident_first(fresh_store, tmp_path):
+    from agents import correlation, knowledge_base
+
+    with patch.object(knowledge_base, "_DB_PATH", tmp_path / "kb.db"):
+        correlation.classify_alert({"alertname": live.ALERT, "pod": "sample-app-6594c596d4-aaaaa"})
+        _run_leak(fresh_store, alerts=("inactive", "firing"))
+        assert correlation.incidents()[0]["state"] == "resolved"
+        assert correlation.classify_alert({"alertname": live.ALERT, "pod": "sample-app-6594c596d4-bbbbb"})["action"] == "new"

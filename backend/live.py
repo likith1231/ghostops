@@ -21,6 +21,7 @@ from typing import Any
 
 import requests
 
+from agents import correlation
 from backend.runs import store
 
 logger = logging.getLogger("ghostops.backend.live")
@@ -155,6 +156,9 @@ def run_live_leak(run_id: str) -> None:
         _step(run_id, live, limit=limit, alert=alert)
 
     try:
+        # A deliberate new incident: close any stale one whose "resolved" notice hasn't arrived yet,
+        # or the new alert would be treated as its duplicate.
+        correlation.resolve_alert({"alertname": ALERT, "component": DEPLOYMENT})
         # 0. Start clean: leaked memory or a still-firing alert would spoil the run.
         pod = _pod_name()
         leaked = int(json.loads(_pod_get(pod, "health")).get("leaked_objects", 0))
@@ -257,6 +261,7 @@ def run_live_canary(run_id: str) -> None:
         _step(run_id, live, alert=alert, requests=dict(stats))
 
     try:
+        correlation.resolve_alert({"alertname": CANARY_ALERT, "component": DEPLOYMENT})
         # 0. Start from a healthy release with no alert in flight.
         if alert_state(CANARY_ALERT) != "inactive":
             _step(run_id, live, step="resetting", reset=True)

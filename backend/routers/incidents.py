@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
 import logging
-from agents import feedback
+from agents import correlation, feedback
 from agents.knowledge_base import _DB_PATH, get_past_incidents
 
 router = APIRouter(prefix="/api/incidents", tags=["incidents"])
@@ -84,6 +84,12 @@ async def incidents_timeseries() -> list[dict]:
     except Exception as exc:  # noqa: BLE001
         logger.error("Failed to query incident timeseries: %s", exc)
         return []
+
+
+@router.get("/correlated")
+async def incidents_correlated(limit: int = 20) -> list[dict]:
+    """Incidents as GhostOps groups them: repeats and related alerts on one workload."""
+    return correlation.incidents(min(limit, 100), db_path=_DB_PATH)
 
 
 @router.get("/feedback")

@@ -40,6 +40,7 @@ load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Now that the path is set up, import the agent pipeline.
 from agents.crew import run_pipeline  # noqa: E402
+from agents import correlation, governance  # noqa: E402
 from agents.knowledge_base import init_db, past_incident_context  # noqa: E402
 
 # Initialise the SQLite knowledge base (creates DB + table if needed).
@@ -311,6 +312,8 @@ def _run_canary_alert(alert: dict[str, Any]) -> None:
     run_id = live.claim_waiting_run() or run_store.create(
         "live", f"Live alert: {canary.ALERT} (release {labels.get('release', '?')})"
     )["id"]
+    if alert.get("_incident"):
+        correlation.attach_run(alert["_incident"], run_id)
     run_store.set_context(run_id, {"alert_type": "error_rate_high", "metrics": {}, "logs": [alert.get("annotations", {}).get("summary", "")]})
     try:
         result = canary.run_canary_pipeline(
@@ -365,6 +368,8 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         "live", f"Live alert: {alert.get('labels', {}).get('alertname', 'alert')} on {pod_name or 'cluster'}"
     )["id"]
     failure_context["run_ref"] = run_id
+    if alert.get("_incident"):
+        correlation.attach_run(alert["_incident"], run_id)
     run_store.set_context(
         run_id,
         {"alert_type": failure_context["alert_type"], "metrics": metrics, "logs": logs[-20:]},
@@ -465,6 +470,12 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks) -> 
         alert_status = alert.get("status", "")
         pod_name = labels.get("pod", "")
 
+        # ---- A resolved alert closes its incident -----------------------
+        if alert_name in HANDLED_ALERTS and alert_status == "resolved":
+            closed = correlation.resolve_alert(labels)
+            results.append({"alert": alert_name, "status": alert_status, "action": "resolved", "incident": closed})
+            continue
+
         # ---- Skip non-actionable alerts --------------------------------
         if alert_name not in HANDLED_ALERTS or alert_status != "firing":
             logger.info(
@@ -477,8 +488,19 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks) -> 
             })
             continue
 
+        # ---- Repeats and related alerts join the open incident ----------
+        verdict = correlation.classify_alert(labels)
+        if verdict["action"] != "new":
+            governance.record(
+                "dedupe", verdict["action"], f"{alert_name} joined incident #{verdict['incident']['id']}",
+                run_ref=verdict["incident"].get("run_ref"), evidence={"incident": verdict["incident"]},
+            )
+            results.append({"alert": alert_name, "pod": pod_name, "action": verdict["action"], "incident": verdict["incident"]["id"]})
+            continue
+
+        alert["_incident"] = verdict["incident"]["id"]
         background_tasks.add_task(_process_alert, alert)
-        results.append({"alert": alert_name, "pod": pod_name, "action": "pipeline_started"})
+        results.append({"alert": alert_name, "pod": pod_name, "action": "pipeline_started", "incident": verdict["incident"]["id"]})
 
     # The pipeline runs after this response. If there was exactly one alert,
     # return it at the top level for convenience; otherwise wrap in a list.

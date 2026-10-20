@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import governance, mock_llm, shield
+from agents import correlation, governance, mock_llm, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -210,7 +210,14 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
     pr_result: dict[str, Any] = {"pr_created": False, "reason": "skipped"}
 
     notify("deploy", "running", {})
-    if validation_result.get("passed") is True and not governance.allow("open_pr", run_ref=run_ref):
+    existing_pr = (
+        correlation.open_pr_for(str(diagnosis.get("root_cause", "")), patch.get("file_path") or file_path)
+        if validation_result.get("passed") is True else None
+    )
+    if existing_pr:
+        logger.info("An open PR already addresses %s: %s", diagnosis.get("root_cause"), existing_pr)
+        pr_result = {"pr_created": False, "reason": "duplicate_of_open_pr", "pr_url": existing_pr}
+    elif validation_result.get("passed") is True and not governance.allow("open_pr", run_ref=run_ref):
         pr_result = {"pr_created": False, "reason": "autonomy_paused"}
     elif validation_result.get("passed") is True and MOCK_LLM and not MOCK_CREATE_PR:
         logger.info("Stage 4/4 — Validation passed (mock mode), skipping PR creation.")
