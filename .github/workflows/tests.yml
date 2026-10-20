@@ -42,4 +42,47 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
       - run: npm run build
+
+  e2e:
+    # The built site against a real backend: mock LLM, real OPA check and Docker sandbox.
+    runs-on: ubuntu-latest
+    env:
+      GHOSTOPS_MOCK_LLM: "1"
+      CREWAI_DISABLE_TELEMETRY: "true"
+      OTEL_SDK_DISABLED: "true"
+      CHROME_PATH: /usr/bin/google-chrome
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            agents/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: pip install -r backend/requirements.txt -r agents/requirements.txt
+      - run: npm ci && npm run build
+        working-directory: web
+      - name: Start backend and site
+        run: |
+          nohup python -m uvicorn backend.main:app --port 8000 > backend.log 2>&1 &
+          (cd web && nohup npm start > ../web.log 2>&1 &)
+          for i in $(seq 1 60); do curl -sf localhost:8000/health && curl -sf localhost:3100 >/dev/null && exit 0; sleep 2; done
+          cat backend.log web.log; exit 1
+      - run: npm run e2e
+        working-directory: web
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure
+          path: |
+            web/e2e-failure.png
+            backend.log
+            web.log

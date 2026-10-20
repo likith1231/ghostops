@@ -19,7 +19,7 @@ const STEP_MS = 1100;
 
 const STAGE_TO_NODE: Record<string, NodeState> = { pending: "idle", running: "running", done: "done", error: "error" };
 
-function nodeStates(run: Run | null): NodeState[] {
+export function nodeStates(run: Run | null): NodeState[] {
   if (!run) return ["idle", "idle", "idle", "idle", "idle"];
   // A live incident: the Alert stage is working until Prometheus fires and the pipeline starts.
   const pipelineStarted = STAGES.some((s) => run.stages[s].status !== "pending");
