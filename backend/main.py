@@ -314,7 +314,7 @@ def _run_canary_alert(alert: dict[str, Any]) -> None:
     run_store.set_context(run_id, {"alert_type": "error_rate_high", "metrics": {}, "logs": [alert.get("annotations", {}).get("summary", "")]})
     try:
         result = canary.run_canary_pipeline(
-            alert, on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data)
+            alert, on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data), run_ref=run_id
         )
         passed = result["validation_result"].get("passed") is True
         run_store.finish(run_id, "passed" if passed else "failed", result=result)
@@ -364,6 +364,7 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
     run_id = live.claim_waiting_run() or run_store.create(
         "live", f"Live alert: {alert.get('labels', {}).get('alertname', 'alert')} on {pod_name or 'cluster'}"
     )["id"]
+    failure_context["run_ref"] = run_id
     run_store.set_context(
         run_id,
         {"alert_type": failure_context["alert_type"], "metrics": metrics, "logs": logs[-20:]},
@@ -547,8 +548,9 @@ async def metrics() -> Response:
 # ---------------------------------------------------------------------------
 # Incident API Router
 # ---------------------------------------------------------------------------
-from backend.routers import detect, incidents, runs
+from backend.routers import detect, governance as governance_router, incidents, runs
 
+app.include_router(governance_router.router)
 app.include_router(incidents.router)
 app.include_router(runs.router)
 app.include_router(detect.router)

@@ -178,3 +178,13 @@ def test_live_canary_endpoint(fresh_store):
 def test_live_canary_endpoint_busy(fresh_store):
     with pipeline_lock:
         assert client.post("/api/live/canary").status_code == 409
+
+
+def test_kill_switch_stops_the_rollback(cluster):
+    from agents import governance
+
+    with patch.object(governance, "is_paused", return_value=True):
+        result = canary.run_canary_pipeline(ALERT)
+    cluster["rb"].assert_not_called()
+    assert result["pr_result"]["reason"] == "autonomy_paused"
+    assert "kill switch" in result["patch"]["explanation"]

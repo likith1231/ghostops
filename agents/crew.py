@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import mock_llm
+from agents import governance, mock_llm
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -121,6 +121,11 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             diagnosis_text = str(reasoner_result)
             diagnosis = _safe_json_loads(diagnosis_text)
         logger.info("Diagnosis: %s", diagnosis.get("root_cause", "unknown"))
+    run_ref = failure_context.get("run_ref")
+    governance.record(
+        "diagnose", str(diagnosis.get("root_cause", "unknown")), str(diagnosis.get("summary", ""))[:300],
+        run_ref=run_ref, evidence={"confidence": diagnosis.get("confidence"), "mock": MOCK_LLM},
+    )
     notify("diagnosis", "done", diagnosis)
 
     # ----- 2. PATCH GENERATOR ----------------------------------------
@@ -147,6 +152,10 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             patch_text = str(patch_result)
             patch = _safe_json_loads(patch_text)
         logger.info("Patch generated — diff length: %d chars", len(patch.get("diff", "")))
+    governance.record(
+        "patch", "generated" if patch.get("diff") else "none", str(patch.get("explanation", ""))[:300],
+        run_ref=run_ref, evidence={"diff_chars": len(patch.get("diff", "")), "file": patch.get("file_path")},
+    )
     notify("patch", "done", patch)
 
     # ----- 3. VALIDATION OFFICER -------------------------------------
@@ -182,13 +191,19 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
             validation_result = _safe_json_loads(str(validation_result_raw))
         span.set_attribute("validation_passed", validation_result.get("passed", False))
         logger.info("Validation passed: %s", validation_result.get("passed"))
+    governance.record(
+        "validate", "passed" if validation_result.get("passed") is True else "failed", str(validation_result.get("summary", ""))[:300],
+        run_ref=run_ref, evidence={"failing_tests": validation_result.get("failing_tests", [])},
+    )
     notify("validation", "done", validation_result)
 
     # ----- 4. DEPLOYMENT ACTION (auto-PR on validated pass) -----------
     pr_result: dict[str, Any] = {"pr_created": False, "reason": "skipped"}
 
     notify("deploy", "running", {})
-    if validation_result.get("passed") is True and MOCK_LLM and not MOCK_CREATE_PR:
+    if validation_result.get("passed") is True and not governance.allow("open_pr", run_ref=run_ref):
+        pr_result = {"pr_created": False, "reason": "autonomy_paused"}
+    elif validation_result.get("passed") is True and MOCK_LLM and not MOCK_CREATE_PR:
         logger.info("Stage 4/4 — Validation passed (mock mode), skipping PR creation.")
         pr_result = {"pr_created": False, "reason": "mock_mode"}
     elif validation_result.get("passed") is True:
@@ -212,6 +227,10 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         logger.info("Validation did NOT pass — skipping PR creation.")
         pr_result = {"pr_created": False, "reason": "validation_failed"}
 
+    governance.record(
+        "open_pr", "opened" if pr_result.get("pr_created") else "skipped",
+        str(pr_result.get("pr_url") or pr_result.get("reason", "")), run_ref=run_ref, evidence=pr_result,
+    )
     notify("deploy", "done", pr_result)
 
     # ----- 5. LOG TO KNOWLEDGE BASE (every run, pass or fail) --------

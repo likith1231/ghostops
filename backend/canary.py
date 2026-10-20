@@ -23,6 +23,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from agents import governance
 from agents.deployer import rollback_deployment
 from agents.detectors import detect_canary_regression
 from agents.mock_llm import unified_diff
@@ -156,17 +157,23 @@ def diagnose(alert: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = None) -> dict[str, Any]:
+def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = None, run_ref: str | None = None) -> dict[str, Any]:
     """Diagnose -> roll back -> verify, reported through the same stages as the LLM pipeline."""
     notify = on_stage or (lambda *a: None)
 
     notify("diagnosis", "running", {})
     diagnosis = diagnose(alert)
+    governance.record("diagnose", diagnosis["root_cause"], diagnosis["summary"], run_ref=run_ref, evidence={"evidence": diagnosis["evidence"]})
     notify("diagnosis", "done", _public(diagnosis))
 
     notify("patch", "running", {})
     plan = diagnosis["rollback"]
-    if plan:
+    paused = bool(plan) and not governance.allow("rollback", run_ref=run_ref, evidence={"release": diagnosis.get("release")})
+    if paused:
+        patch = {"action": "none", "diff": "", "explanation": "A rollback was warranted, but the kill switch is on: nothing was changed."}
+        outcome = {"rolled_back": False}
+        plan = None
+    elif plan:
         before, after = plan["from"], plan["to"]
         patch = {
             "action": "rollback",
@@ -183,19 +190,25 @@ def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = 
     else:
         patch = {"action": "none", "diff": "", "explanation": "No recent rollout to undo; nothing is changed automatically."}
         outcome = {"rolled_back": False}
+    if patch["action"] == "rollback":
+        governance.record(
+            "rollback", "done" if outcome["rolled_back"] else "failed", patch["explanation"], run_ref=run_ref,
+            evidence={"output": outcome.get("output")},
+        )
     notify("patch", "done", patch)
 
     notify("validation", "running", {})
     validation = verify() if outcome["rolled_back"] else {
         "passed": False,
-        "summary": "Not remediated automatically." if not plan else "The rollback did not run.",
+        "summary": "Paused by the kill switch." if paused else "Not remediated automatically." if not plan else "The rollback did not run.",
         "failing_tests": [],
         "test_output": "",
     }
     notify("validation", "done", validation)
 
+    governance.record("verify", "passed" if validation["passed"] else "failed", validation["summary"], run_ref=run_ref)
     notify("deploy", "running", {})
-    pr_result = {"pr_created": False, "reason": "rollback" if validation["passed"] else "needs_human"}
+    pr_result = {"pr_created": False, "reason": "rollback" if validation["passed"] else "autonomy_paused" if paused else "needs_human"}
     notify("deploy", "done", pr_result)
 
     try:
