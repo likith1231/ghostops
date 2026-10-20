@@ -207,6 +207,14 @@ def run_canary_pipeline(alert: dict[str, Any], on_stage: StageCallback | None = 
     notify("validation", "done", validation)
 
     governance.record("verify", "passed" if validation["passed"] else "failed", validation["summary"], run_ref=run_ref)
+    if validation["passed"]:
+        from backend import verification
+
+        started = alert.get("startsAt")
+        verification.start(
+            kind="rollback", alert_type="error_rate_high", run_ref=run_ref, reference=diagnosis.get("release"),
+            started_at=datetime.fromisoformat(started.replace("Z", "+00:00")) if started else datetime.now(timezone.utc),
+        )
     notify("deploy", "running", {})
     pr_result = {"pr_created": False, "reason": "rollback" if validation["passed"] else "autonomy_paused" if paused else "needs_human"}
     notify("deploy", "done", pr_result)

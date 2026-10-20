@@ -9,6 +9,7 @@ import tempfile
 
 _tmp = tempfile.mkdtemp(prefix="ghostops-tests-")
 os.environ["GHOSTOPS_DB_PATH"] = os.path.join(_tmp, "incidents.db")
+os.environ["GHOSTOPS_DISABLE_WATCHER"] = "1"  # tests drive verification.tick() themselves
 
 
 import pytest  # noqa: E402

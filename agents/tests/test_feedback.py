@@ -65,7 +65,9 @@ def test_sync_records_states_and_skips_decided(db):
     _log(db, "")  # no PR: never checked
     states = {"1": _gh(merged=True, state="closed"), "2": _gh("open")}
     with patch.object(feedback.requests, "get", side_effect=lambda url, **kw: states[url.rsplit("/", 1)[1]]):
-        assert feedback.sync_pr_outcomes(db_path=db) == {"checked": 2, "updated": 2, "failed": 0}
+        result = feedback.sync_pr_outcomes(db_path=db)
+    assert {k: result[k] for k in ("checked", "updated", "failed")} == {"checked": 2, "updated": 2, "failed": 0}
+    assert [m["pr_url"] for m in result["newly_merged"]] == ["https://github.com/a/b/pull/1"]
     # #1 is merged (final): only #2 is asked again.
     with patch.object(feedback.requests, "get", return_value=_gh("closed")) as get:
         assert feedback.sync_pr_outcomes(db_path=db)["checked"] == 1
@@ -75,11 +77,12 @@ def test_sync_records_states_and_skips_decided(db):
 def test_sync_failure_is_counted_not_fatal(db):
     _log(db, "https://github.com/a/b/pull/1")
     with patch.object(feedback.requests, "get", side_effect=feedback.requests.Timeout()):
-        assert feedback.sync_pr_outcomes(db_path=db) == {"checked": 1, "updated": 0, "failed": 1}
+        result = feedback.sync_pr_outcomes(db_path=db)
+    assert {k: result[k] for k in ("checked", "updated", "failed")} == {"checked": 1, "updated": 0, "failed": 1}
 
 
 def test_sync_missing_db(tmp_path):
-    assert feedback.sync_pr_outcomes(db_path=tmp_path / "none.db") == {"checked": 0, "updated": 0, "failed": 0}
+    assert feedback.sync_pr_outcomes(db_path=tmp_path / "none.db")["checked"] == 0
 
 
 def test_acceptance_rate_counts_only_decided_prs(db):

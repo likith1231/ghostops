@@ -68,10 +68,10 @@ def pr_state(pr_url: str, token: str = "") -> str | None:
     return "superseded" if labels & SUPERSEDED_LABELS else "closed"
 
 
-def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, int]:
+def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, Any]:
     """Refresh pr_state for every incident with a PR that is not merged/closed yet."""
     path = Path(db_path) if db_path else knowledge_base._DB_PATH
-    counts = {"checked": 0, "updated": 0, "failed": 0}
+    counts: dict[str, Any] = {"checked": 0, "updated": 0, "failed": 0, "newly_merged": []}
     if not path.exists():
         return counts
     knowledge_base.init_db(path)  # adds the feedback columns to older databases
@@ -79,11 +79,11 @@ def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, int]:
     conn = sqlite3.connect(str(path))
     try:
         rows = conn.execute(
-            "SELECT id, pr_url, pr_state FROM incidents WHERE pr_url LIKE 'https://github.com/%' "
+            "SELECT id, pr_url, pr_state, alert_type, timestamp FROM incidents WHERE pr_url LIKE 'https://github.com/%' "
             "AND (pr_state IS NULL OR pr_state NOT IN ('merged', 'superseded'))"
         ).fetchall()
         now = datetime.now(timezone.utc).isoformat()
-        for incident_id, url, old in rows:
+        for incident_id, url, old, alert_type, timestamp in rows:
             counts["checked"] += 1
             state = pr_state(url, token)
             if state is None:
@@ -91,6 +91,8 @@ def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, int]:
                 continue
             if state != old:
                 counts["updated"] += 1
+                if state == "merged":
+                    counts["newly_merged"].append({"incident_id": incident_id, "pr_url": url, "alert_type": alert_type, "timestamp": timestamp})
             conn.execute("UPDATE incidents SET pr_state = ?, pr_checked_at = ? WHERE id = ?", (state, now, incident_id))
         conn.commit()
     finally:

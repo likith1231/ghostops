@@ -101,8 +101,28 @@ async def incidents_feedback() -> dict:
 @router.post("/feedback/sync")
 def incidents_feedback_sync() -> dict:
     """Ask GitHub for the current state of every undecided PR, then report."""
+    from backend import verification
+
     counts = feedback.sync_pr_outcomes(db_path=_DB_PATH)
+    for merged in counts.get("newly_merged", []):
+        verification.start_for_merge(merged)
     return {**counts, **feedback.acceptance(db_path=_DB_PATH)}
+
+
+@router.get("/verifications")
+async def incidents_verifications(limit: int = 20) -> list[dict]:
+    """Fixes being watched in production, and their verdicts."""
+    from backend import verification
+
+    return verification.listing(min(limit, 100))
+
+
+@router.get("/mttr")
+async def incidents_mttr() -> dict:
+    """Real MTTR: alert start -> verified healthy in production."""
+    from backend import verification
+
+    return verification.mttr_summary()
 
 
 @router.get("/{incident_id}")

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
 import os
 import sys
 import time
@@ -110,10 +111,21 @@ trace.set_tracer_provider(provider)
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Start the watcher that verifies deployed fixes in production (post-merge verification, MTTR)."""
+    if os.getenv("GHOSTOPS_DISABLE_WATCHER", "") not in ("1", "true", "yes"):
+        from backend import verification
+
+        verification.run_watcher()
+    yield
+
+
 app = FastAPI(
     title="GhostOps Ingestion Service",
     description="Receives Alertmanager webhooks and feeds the AI agent pipeline.",
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 FastAPIInstrumentor.instrument_app(app)
@@ -577,6 +589,7 @@ async def metrics() -> Response:
 from backend.routers import detect, governance as governance_router, incidents, runs
 
 app.include_router(governance_router.router)
+
 app.include_router(incidents.router)
 app.include_router(runs.router)
 app.include_router(detect.router)
