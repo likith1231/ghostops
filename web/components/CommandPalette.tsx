@@ -17,6 +17,8 @@ const SECTIONS: [string, string][] = [
   ["Live pipeline", "#pipeline"],
   ["Architecture", "#how"],
   ["Impact", "#impact"],
+  ["Production: MTTR, cost, verification", "#production"],
+  ["Trust: audit trail, incidents, fix library", "#trust"],
   ["Use cases", "#usecases"],
   ["Detector lab", "#lab"],
   ["Recent incidents", "#incidents"],

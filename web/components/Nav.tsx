@@ -1,11 +1,14 @@
 "use client";
 
 import type { BackendState } from "@/lib/useBackend";
+import AutonomySwitch from "./AutonomySwitch";
 import { openPalette } from "./CommandPalette";
 
 const LINKS = [
   ["Live", "#pipeline"],
   ["Impact", "#impact"],
+  ["Production", "#production"],
+  ["Trust", "#trust"],
   ["Use cases", "#usecases"],
   ["Detector lab", "#lab"],
   ["Incidents", "#incidents"],
@@ -53,6 +56,7 @@ export default function Nav({ backend }: { backend: BackendState }) {
             <kbd>Ctrl</kbd>
             <kbd>K</kbd>
           </button>
+          <AutonomySwitch online={backend.online} />
           <BackendPill backend={backend} />
         </div>
       </nav>

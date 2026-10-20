@@ -26,6 +26,9 @@ export interface Patch {
   diff?: string;
   explanation?: string;
   file_path?: string;
+  source?: string;
+  evidence?: { key_fingerprint: string; signature: string };
+  regression_test?: { path: string; content: string };
 }
 
 export interface Validation {
@@ -33,12 +36,18 @@ export interface Validation {
   summary?: string;
   failing_tests?: string[];
   test_output?: string;
+  regression_test?: { path: string; failed_before: boolean; passed_after: boolean; verified: boolean };
+  replay?: { verdict: string; summary: string };
+  fix_canary?: { verdict: string; summary: string };
 }
 
 export interface PrResult {
   pr_created?: boolean;
   pr_url?: string;
   reason?: string;
+  decision?: string;
+  auto_merged?: boolean;
+  paged?: boolean;
 }
 
 export interface Run {
@@ -50,7 +59,16 @@ export interface Run {
   updated_at: string;
   version: number;
   stages: Record<StageName, { status: StageStatus; data: Record<string, unknown> }>;
-  result: { diagnosis: Diagnosis; patch: Patch; validation_result: Validation; pr_result: PrResult } | null;
+  result: {
+    diagnosis: Diagnosis;
+    patch: Patch;
+    validation_result: Validation;
+    pr_result: PrResult;
+    risk?: RiskReport | null;
+    shield?: ShieldReport | null;
+    postmortem?: { id: number; title: string } | null;
+    cost?: { cost_usd: number; saved_usd: number; degraded_minutes: number; failed_requests: number | null } | null;
+  } | null;
   error: string | null;
   /** What the pipeline was given: telemetry only, never source files. */
   context: { alert_type?: string; metrics?: Record<string, { ts?: string; value: number }[]>; logs?: string[] } | null;
@@ -117,6 +135,101 @@ export interface Feedback {
   unknown: number;
   acceptance_rate: number | null;
   last_checked: string | null;
+}
+
+export interface Governance {
+  paused: boolean;
+  by: string | null;
+  at: string | null;
+  reason: string | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  decision: string;
+  reason: string;
+  run_ref: string | null;
+  evidence: Record<string, unknown>;
+  hash: string;
+}
+
+export interface AuditTrail {
+  entries: AuditEntry[];
+  chain: { valid: boolean; entries: number; broken_at: number | null };
+}
+
+export interface CorrelatedIncident {
+  id: number;
+  workload: string;
+  alerts: string[];
+  first_seen: string;
+  last_seen: string;
+  occurrences: number;
+  run_ref: string | null;
+  state: "open" | "resolved";
+}
+
+export interface Mttr {
+  count: number;
+  median_s: number | null;
+  p90_s: number | null;
+  under_5_min_pct: number | null;
+  states: Record<string, number>;
+}
+
+export interface VerificationRow {
+  id: number;
+  run_ref: string | null;
+  kind: string;
+  alert_type: string;
+  state: "watching" | "resolved" | "reopened";
+  started_at: string;
+  deployed_at: string;
+  window_s: number;
+  mttr_s: number | null;
+  note: string | null;
+  chaos: { verdict: string; summary: string } | null;
+}
+
+export interface CostSummary {
+  incidents: number;
+  total_cost_usd: number;
+  total_saved_usd: number;
+  rates: { per_failed_request: number; per_degraded_minute: number; per_gib_hour: number; manual_mttr_minutes: number };
+  items: { id: number; run_ref: string | null; alert_type: string; cost_usd: number; saved_usd: number; measures: Record<string, number | null> }[];
+}
+
+export interface FixSkill {
+  id: number;
+  root_cause: string;
+  file_name: string;
+  merges: number;
+  uses: number;
+  promoted: boolean;
+  diff: string;
+}
+
+export interface Postmortem {
+  id: number;
+  run_ref: string;
+  title: string;
+  markdown: string;
+}
+
+export interface RiskReport {
+  score: number;
+  level: "low" | "medium" | "high";
+  decision: string;
+  factors: { factor: string; points: number; why: string }[];
+}
+
+export interface ShieldReport {
+  risk: string;
+  quarantined: number;
+  findings: { where: string; categories: string[]; excerpt: string; action: string }[];
 }
 
 export interface DayCount {
@@ -197,7 +310,17 @@ export const api = {
   liveLeak: () => request<{ run_id: string }>("/api/live/leak", { method: "POST" }),
   liveCanary: () => request<{ run_id: string }>("/api/live/canary", { method: "POST" }),
   detect: (body: Record<string, unknown>) =>
-    request<{ detections: Detection[] }>("/api/detect", { method: "POST", body: JSON.stringify(body) }),
+    request<{ detections: Detection[]; shield?: ShieldReport }>("/api/detect", { method: "POST", body: JSON.stringify(body) }),
+  governance: () => request<Governance>("/api/governance"),
+  pause: (reason: string) => request<Governance>("/api/governance/pause", { method: "POST", body: JSON.stringify({ reason }) }),
+  resume: () => request<Governance>("/api/governance/resume", { method: "POST", body: JSON.stringify({}) }),
+  audit: (limit = 40) => request<AuditTrail>(`/api/governance/audit?limit=${limit}`),
+  correlated: () => request<CorrelatedIncident[]>("/api/incidents/correlated"),
+  mttr: () => request<Mttr>("/api/incidents/mttr"),
+  verifications: () => request<VerificationRow[]>("/api/incidents/verifications"),
+  costs: () => request<CostSummary>("/api/incidents/costs"),
+  fixLibrary: () => request<FixSkill[]>("/api/incidents/fix-library"),
+  postmortem: (runRef: string) => request<Postmortem>(`/api/incidents/postmortems/${runRef}`),
 };
 
 /** Follow a run over Server-Sent Events. Returns a function that stops listening. */
