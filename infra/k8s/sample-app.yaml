@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: sample-app
-          image: ghostops-sample-app:v2
+          image: ghostops-sample-app:v4
           imagePullPolicy: Never
           resources:
             limits:

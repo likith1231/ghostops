@@ -117,8 +117,8 @@ FIX_TEMPLATES: tuple[FixTemplate, ...] = (
     FixTemplate(
         root_cause="memory_leak",
         file_name="app.py",
-        old="from flask import Flask, jsonify\n",
-        new="from collections import deque\n\nfrom flask import Flask, jsonify\n",
+        old="import os\n",
+        new="import os\nfrom collections import deque\n",
         explanation="",
     ),
     FixTemplate(

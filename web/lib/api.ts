@@ -59,12 +59,17 @@ export interface Run {
 }
 
 export interface LiveProgress {
-  step: "starting" | "resetting" | "leaking" | "waiting_alert" | "alert_firing";
+  /** "leak" (B1, default) or "canary" (C1: a bad release). */
+  kind?: "leak" | "canary";
+  step: "starting" | "resetting" | "leaking" | "deploying" | "waiting_alert" | "alert_firing";
   reset?: boolean;
   pod?: string;
-  leaked_mib: number;
-  memory: { ts: number; value: number }[];
-  limit: number | null;
+  leaked_mib?: number;
+  memory?: { ts: number; value: number }[];
+  limit?: number | null;
+  release?: string;
+  error_rate?: { ts: number; value: number }[];
+  requests?: { ok?: number; failed?: number };
   alert: "inactive" | "pending" | "firing";
 }
 
@@ -190,6 +195,7 @@ export const api = {
   activity: () => request<Activity>("/api/activity"),
   liveStatus: () => request<LiveStatus>("/api/live/status"),
   liveLeak: () => request<{ run_id: string }>("/api/live/leak", { method: "POST" }),
+  liveCanary: () => request<{ run_id: string }>("/api/live/canary", { method: "POST" }),
   detect: (body: Record<string, unknown>) =>
     request<{ detections: Detection[] }>("/api/detect", { method: "POST", body: JSON.stringify(body) }),
 };
