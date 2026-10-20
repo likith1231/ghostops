@@ -59,12 +59,17 @@ export interface Run {
 }
 
 export interface LiveProgress {
-  step: "starting" | "resetting" | "leaking" | "waiting_alert" | "alert_firing";
+  /** "leak" (B1, default) or "canary" (C1: a bad release). */
+  kind?: "leak" | "canary";
+  step: "starting" | "resetting" | "leaking" | "deploying" | "waiting_alert" | "alert_firing";
   reset?: boolean;
   pod?: string;
-  leaked_mib: number;
-  memory: { ts: number; value: number }[];
-  limit: number | null;
+  leaked_mib?: number;
+  memory?: { ts: number; value: number }[];
+  limit?: number | null;
+  release?: string;
+  error_rate?: { ts: number; value: number }[];
+  requests?: { ok?: number; failed?: number };
   alert: "inactive" | "pending" | "firing";
 }
 
@@ -101,6 +106,17 @@ export interface Summary {
   failed: number;
   pass_rate: number;
   prs_created: number;
+}
+
+export interface Feedback {
+  prs: number;
+  merged: number;
+  closed: number;
+  superseded: number;
+  open: number;
+  unknown: number;
+  acceptance_rate: number | null;
+  last_checked: string | null;
 }
 
 export interface DayCount {
@@ -171,12 +187,15 @@ export const api = {
   run: (id: string) => request<Run>(`/api/runs/${id}`),
   summary: () => request<Summary>("/api/incidents/summary"),
   timeseries: () => request<DayCount[]>("/api/incidents/timeseries"),
+  feedback: () => request<Feedback>("/api/incidents/feedback"),
+  syncFeedback: () => request<Feedback & { checked: number; failed: number }>("/api/incidents/feedback/sync", { method: "POST" }),
   recent: (limit = 12) => request<Incident[]>(`/api/incidents/recent?limit=${limit}`),
   incident: (id: number) => request<Incident>(`/api/incidents/${id}`),
   usecases: () => request<UseCase[]>("/api/usecases"),
   activity: () => request<Activity>("/api/activity"),
   liveStatus: () => request<LiveStatus>("/api/live/status"),
   liveLeak: () => request<{ run_id: string }>("/api/live/leak", { method: "POST" }),
+  liveCanary: () => request<{ run_id: string }>("/api/live/canary", { method: "POST" }),
   detect: (body: Record<string, unknown>) =>
     request<{ detections: Detection[] }>("/api/detect", { method: "POST", body: JSON.stringify(body) }),
 };

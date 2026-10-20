@@ -19,7 +19,7 @@ const STEP_MS = 1100;
 
 const STAGE_TO_NODE: Record<string, NodeState> = { pending: "idle", running: "running", done: "done", error: "error" };
 
-function nodeStates(run: Run | null): NodeState[] {
+export function nodeStates(run: Run | null): NodeState[] {
   if (!run) return ["idle", "idle", "idle", "idle", "idle"];
   // A live incident: the Alert stage is working until Prometheus fires and the pipeline starts.
   const pipelineStarted = STAGES.some((s) => run.stages[s].status !== "pending");
@@ -32,7 +32,8 @@ function nodeStates(run: Run | null): NodeState[] {
   let deploy = st("deploy");
   if (deploy === "done") {
     const pr = run.stages.deploy.data as PrResult;
-    deploy = pr.pr_created ? "done" : pr.reason === "mock_mode" ? "held" : "error";
+    // A completed rollback needs no PR: the remediation is already done.
+    deploy = pr.pr_created || pr.reason === "rollback" ? "done" : pr.reason === "mock_mode" ? "held" : "error";
   }
   return ["done", st("diagnosis"), st("patch"), validation, deploy];
 }
@@ -60,34 +61,48 @@ function Placeholder() {
   return <p className="text-mist">Waiting for this stage…</p>;
 }
 
-const LIVE_STEPS: { key: LiveProgress["step"][]; label: string }[] = [
-  { key: ["resetting"], label: "Reset sample-app (clear old leak / alert)" },
-  { key: ["leaking"], label: "Leak memory in the real pod (10 MiB per request)" },
-  { key: ["waiting_alert"], label: "Prometheus: memory > 80% of limit for 30 s" },
-  { key: ["alert_firing"], label: "Alertmanager → GhostOps webhook → pipeline" },
-];
-const STEP_ORDER: LiveProgress["step"][] = ["starting", "resetting", "leaking", "waiting_alert", "alert_firing"];
+const LIVE_STEPS: Record<"leak" | "canary", { key: LiveProgress["step"]; label: (l: LiveProgress) => string }[]> = {
+  leak: [
+    { key: "resetting", label: () => "Reset sample-app (clear old leak / alert)" },
+    { key: "leaking", label: () => "Leak memory in the real pod (10 MiB per request)" },
+    { key: "waiting_alert", label: () => "Prometheus: memory > 80% of limit for 30 s" },
+    { key: "alert_firing", label: () => "Alertmanager → GhostOps webhook → pipeline" },
+  ],
+  canary: [
+    { key: "resetting", label: () => "Wait for the previous error-rate alert to clear" },
+    { key: "deploying", label: (l) => `Ship a bad release (${l.release ?? "canary"}) to the cluster` },
+    { key: "waiting_alert", label: () => "Real traffic · Prometheus: > 20% of requests failing for 30 s" },
+    { key: "alert_firing", label: () => "Alertmanager → GhostOps webhook → diagnose & roll back" },
+  ],
+};
+const STEP_ORDER: LiveProgress["step"][] = ["starting", "resetting", "leaking", "deploying", "waiting_alert", "alert_firing"];
 
-/** Real progress of a live cluster incident, before the agents take over. */
+/** Real progress of a live cluster incident, before GhostOps takes over. */
 function LivePanel({ live, run }: { live: LiveProgress; run: Run }) {
+  const kind = live.kind ?? "leak";
   const at = STEP_ORDER.indexOf(live.step);
   const pipelineStarted = STAGES.some((s) => run.stages[s].status !== "pending");
-  const latest = live.memory.at(-1)?.value;
-  const pct = latest && live.limit ? Math.min(100, (latest / live.limit) * 100) : null;
+  let gauge: { label: string; pct: number; danger: number } | null = null;
+  if (kind === "leak") {
+    const latest = live.memory?.at(-1)?.value;
+    if (latest && live.limit) gauge = { label: "memory (from Prometheus)", pct: Math.min(100, (latest / live.limit) * 100), danger: 80 };
+  } else {
+    const latest = live.error_rate?.at(-1)?.value;
+    if (latest !== undefined) gauge = { label: `release ${live.release} error rate (from Prometheus)`, pct: Math.min(100, latest * 100), danger: 20 };
+  }
   return (
     <div className="glass rounded-2xl p-5">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-semibold text-white">Live cluster incident</h3>
+        <h3 className="font-semibold text-white">{kind === "canary" ? "Live cluster incident · bad release" : "Live cluster incident · memory leak"}</h3>
         <span className="font-mono text-[11px] uppercase tracking-widest text-mist">pod {live.pod ?? "…"}</span>
       </div>
       <ol className="space-y-2.5">
-        {LIVE_STEPS.map(({ key, label }) => {
-          const i = STEP_ORDER.indexOf(key[0]);
-          const skipped = key[0] === "resetting" && !live.reset; // only shown when a reset actually ran
+        {LIVE_STEPS[kind].map(({ key, label }) => {
+          const i = STEP_ORDER.indexOf(key);
+          if (key === "resetting" && !live.reset) return null; // only shown when a reset actually ran
           const state = pipelineStarted || at > i ? "done" : at === i ? (run.status === "error" ? "error" : "running") : "pending";
-          if (skipped) return null;
           return (
-            <li key={label} className="flex items-center gap-3 text-sm">
+            <li key={key} className="flex flex-wrap items-center gap-3 text-sm">
               <span
                 className={`grid h-5 w-5 place-items-center rounded-full border text-[10px] ${
                   state === "done" ? "border-ok bg-ok/15 text-ok" : state === "running" ? "pulse-ring border-arc bg-arc/15 text-arc" : state === "error" ? "border-bad text-bad" : "border-white/15 text-mist"
@@ -95,9 +110,14 @@ function LivePanel({ live, run }: { live: LiveProgress; run: Run }) {
               >
                 {state === "done" ? "✓" : state === "error" ? "✕" : ""}
               </span>
-              <span className={state === "pending" ? "text-mist" : "text-white/85"}>{label}</span>
-              {key[0] === "leaking" && live.leaked_mib > 0 && <span className="font-mono text-xs text-arc">{live.leaked_mib} MiB</span>}
-              {key[0] === "waiting_alert" && at >= i && (
+              <span className={state === "pending" ? "text-mist" : "text-white/85"}>{label(live)}</span>
+              {key === "leaking" && (live.leaked_mib ?? 0) > 0 && <span className="font-mono text-xs text-arc">{live.leaked_mib} MiB</span>}
+              {key === "waiting_alert" && kind === "canary" && live.requests && (
+                <span className="font-mono text-xs text-mist">
+                  <span className="text-ok">{live.requests.ok ?? 0} ok</span> · <span className="text-bad">{live.requests.failed ?? 0} failed</span>
+                </span>
+              )}
+              {key === "waiting_alert" && at >= i && (
                 <span className={`font-mono text-xs ${live.alert === "firing" ? "text-bad" : live.alert === "pending" ? "text-warn" : "text-mist"}`}>
                   alert {live.alert}
                 </span>
@@ -106,17 +126,15 @@ function LivePanel({ live, run }: { live: LiveProgress; run: Run }) {
           );
         })}
       </ol>
-      {pct !== null && (
+      {gauge && (
         <div className="mt-4">
           <div className="mb-1 flex justify-between font-mono text-[11px] text-mist">
-            <span>memory (from Prometheus)</span>
-            <span className={pct > 80 ? "text-bad" : "text-arc"}>{pct.toFixed(0)}% of limit</span>
+            <span>{gauge.label}</span>
+            <span className={gauge.pct > gauge.danger ? "text-bad" : "text-arc"}>{gauge.pct.toFixed(0)}%</span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-white/5">
-            <div className={`h-full transition-all duration-700 ${pct > 80 ? "bg-bad" : "bg-arc"}`} style={{ width: `${pct}%` }} />
-          </div>
-          <div className="relative h-0">
-            <span className="absolute -top-2 h-2 w-px bg-white/40" style={{ left: "80%" }} title="alert threshold" />
+          <div className="relative h-2 overflow-hidden rounded-full bg-white/5">
+            <div className={`h-full transition-all duration-700 ${gauge.pct > gauge.danger ? "bg-bad" : "bg-arc"}`} style={{ width: `${gauge.pct}%` }} />
+            <span className="absolute top-0 h-2 w-px bg-white/60" style={{ left: `${gauge.danger}%` }} title="alert threshold" />
           </div>
         </div>
       )}
@@ -211,7 +229,8 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
   const trigger = useCallback(async (scenario: string) => {
     setError(null);
     try {
-      const { run_id } = scenario === "live" ? await api.liveLeak() : await api.simulate(scenario);
+      const { run_id } =
+        scenario === "live" ? await api.liveLeak() : scenario === "live-canary" ? await api.liveCanary() : await api.simulate(scenario);
       follow(run_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -265,17 +284,25 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     <div className="space-y-6">
       <div className="glass relative isolate overflow-hidden rounded-3xl">
         <div className="relative z-40 flex flex-wrap items-center gap-2 p-4 sm:absolute sm:inset-x-0 sm:top-0">
-          <button
-            onClick={() => setSelected("live")}
-            disabled={!liveStatus?.ready}
-            title={liveStatus?.ready ? `Real leak in ${liveStatus.pod}; Prometheus fires the alert` : liveStatus?.error ?? "checking the cluster…"}
-            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
-              selected === "live" ? "border-bad/70 bg-bad/15 text-white" : "border-bad/30 bg-black/30 text-mist hover:text-white"
-            }`}
-          >
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
-            <span className="font-mono text-bad">LIVE</span> real cluster · memory leak
-          </button>
+          {(
+            [
+              ["live", "memory leak", `Real leak in ${liveStatus?.pod}; Prometheus fires the alert`],
+              ["live-canary", "bad release", "Ship a failing release; GhostOps diagnoses it and rolls back"],
+            ] as const
+          ).map(([id, label, hint]) => (
+            <button
+              key={id}
+              onClick={() => setSelected(id)}
+              disabled={!liveStatus?.ready}
+              title={liveStatus?.ready ? hint : liveStatus?.error ?? "checking the cluster…"}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                selected === id ? "border-bad/70 bg-bad/15 text-white" : "border-bad/30 bg-black/30 text-mist hover:text-white"
+              }`}
+            >
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
+              <span className="font-mono text-bad">LIVE</span> {label}
+            </button>
+          ))}
           <span className="mx-1 h-4 w-px bg-white/10" />
           {(scenarios.length ? scenarios : [{ id: "b1", title: "Memory leak -> OOM" }]).map((s) => (
             <button
@@ -323,7 +350,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
         <MemoryChart
           key={run!.id}
           metrics={{
-            memory_working_set: run!.live!.memory.map((m) => ({ value: m.value })),
+            memory_working_set: run!.live!.memory!.map((m) => ({ value: m.value })),
             ...(run!.live!.limit ? { memory_limit_bytes: [{ value: run!.live!.limit }] } : {}),
           }}
           fixed={v?.status === "done" ? validation?.passed === true : null}
@@ -354,7 +381,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
           )}
         </Card>
 
-        <Card title="2 · Patch" state={p?.status ?? "pending"}>
+        <Card title={(patch as { action?: string } | undefined)?.action === "rollback" ? "2 · Remediation — rollback" : "2 · Patch"} state={p?.status ?? "pending"}>
           {patch?.diff !== undefined ? (
             <>
               {patch.file_path && <div className="font-mono text-xs text-arc">{patch.file_path}</div>}
@@ -366,7 +393,10 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
           )}
         </Card>
 
-        <Card title="3 · Validation — OPA policy + Docker sandbox" state={v?.status ?? "pending"}>
+        <Card
+          title={(patch as { action?: string } | undefined)?.action === "rollback" ? "3 · Verification — real traffic after the rollback" : "3 · Validation — OPA policy + Docker sandbox"}
+          state={v?.status ?? "pending"}
+        >
           {validation?.summary ? (
             <>
               <div className={`text-lg font-semibold ${validation.passed ? "text-ok" : "text-bad"}`}>
@@ -398,6 +428,16 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
               <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-arc underline-offset-4 hover:underline">
                 {pr.pr_url}
               </a>
+            ) : pr.reason === "rollback" ? (
+              <p>
+                <span className="font-semibold text-ok">Rolled back — no PR needed.</span> The rollback restores the release that was
+                already reviewed and running; the bad release&apos;s change is for a human to fix and re-ship.
+              </p>
+            ) : pr.reason === "needs_human" ? (
+              <p>
+                <span className="font-semibold text-warn">Left for a human.</span> There was no recent release GhostOps could safely roll
+                back, so nothing was changed automatically.
+              </p>
             ) : pr.reason === "mock_mode" ? (
               <p>
                 Validated fix ready. In mock mode GhostOps holds the PR instead of opening one; set{" "}

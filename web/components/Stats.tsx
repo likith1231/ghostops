@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type DayCount, type Summary } from "@/lib/api";
+import { api, type DayCount, type Feedback, type Summary } from "@/lib/api";
 
 function CountUp({ value, decimals = 0, suffix = "" }: { value: number; decimals?: number; suffix?: string }) {
   const [shown, setShown] = useState(0);
@@ -63,6 +63,73 @@ function Bars({ days }: { days: DayCount[] }) {
   );
 }
 
+/** What human reviewers did with GhostOps' PRs, synced from GitHub on demand. */
+function HumanReview() {
+  const [fb, setFb] = useState<Feedback | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.feedback().then(setFb).catch(() => setFb(null));
+  }, []);
+
+  const sync = async () => {
+    setSyncing(true);
+    setNote(null);
+    try {
+      const r = await api.syncFeedback();
+      setFb(r);
+      setNote(r.failed ? `${r.failed} PR(s) could not be read from GitHub` : `checked ${r.checked} PR(s) on GitHub`);
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const segments: [keyof Feedback, string, string][] = [
+    ["merged", "merged", "bg-ok"],
+    ["open", "awaiting review", "bg-arc"],
+    ["closed", "rejected", "bg-bad"],
+    ["superseded", "duplicates", "bg-white/25"],
+  ];
+  const total = fb?.prs || 1;
+
+  return (
+    <div className="glass rounded-2xl p-5 lg:col-span-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="font-mono text-[11px] uppercase tracking-[0.25em] text-mist">Human review of GhostOps&apos; PRs</div>
+          <div className="mt-2 text-4xl font-semibold text-white">
+            {fb?.acceptance_rate == null ? "—" : `${fb.acceptance_rate}%`}
+            <span className="ml-2 text-sm font-normal text-mist">accepted (merged ÷ merged + rejected)</span>
+          </div>
+        </div>
+        <button onClick={sync} disabled={syncing} className="cut-corners border border-arc/30 bg-arc/5 px-4 py-2 font-mono text-xs text-white transition hover:bg-arc/15 disabled:opacity-50">
+          {syncing ? "syncing…" : "↻ sync from GitHub"}
+        </button>
+      </div>
+      <div className="mt-4 flex h-2.5 overflow-hidden rounded-full bg-white/5">
+        {fb && segments.map(([key, , color]) => <div key={key} className={color} style={{ width: `${((fb[key] as number) / total) * 100}%` }} />)}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-mist">
+        {segments.map(([key, label, color]) => (
+          <span key={key} className="flex items-center gap-1.5">
+            <i className={`h-2 w-2 rounded-sm ${color}`} />
+            {fb ? (fb[key] as number) : 0} {label}
+          </span>
+        ))}
+        <span className="ml-auto font-mono">
+          {note ?? (fb?.last_checked ? `last synced ${new Date(fb.last_checked).toLocaleString()}` : "never synced")}
+        </span>
+      </div>
+      <p className="mt-3 text-xs text-mist">
+        Every new diagnosis is given past incidents together with what the reviewer did with their fix. Label a PR <code className="text-arc">duplicate</code> on GitHub to keep it out of the rate.
+      </p>
+    </div>
+  );
+}
+
 export default function Stats({ refreshKey }: { refreshKey: number }) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [days, setDays] = useState<DayCount[]>([]);
@@ -91,6 +158,7 @@ export default function Stats({ refreshKey }: { refreshKey: number }) {
         </div>
         <Bars days={days} />
       </div>
+      <HumanReview />
     </div>
   );
 }

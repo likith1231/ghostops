@@ -9,7 +9,7 @@ const STEPS = ["Alert", "Diagnosis", "Patch", "Validation", "Outcome"] as const;
 const STEP_SECONDS = 3;
 
 /** "Diagnosis: x | Validation: PASS | (y) | PR: z" -> its labelled parts. */
-function parts(summary: string | null) {
+export function parts(summary: string | null) {
   const out: Record<string, string> = {};
   for (const piece of (summary ?? "").split(" | ")) {
     const m = /^(Diagnosis|Validation|PR skipped|PR): ?(.*)$/.exec(piece.trim());

@@ -110,6 +110,22 @@ async def live_leak() -> dict:
     return {"run_id": run["id"]}
 
 
+@router.post("/live/canary", status_code=202)
+async def live_canary() -> dict:
+    """Ship a bad release to the real cluster and follow the real alert into a rollback."""
+    if pipeline_lock.locked():
+        raise HTTPException(status_code=409, detail="a pipeline is already running")
+    if not live.live_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="a live incident is already in progress")
+    try:
+        run = store.create("live", "Live cluster: bad release (canary regression)")
+        threading.Thread(target=live.run_live_canary, args=(run["id"],), daemon=True).start()
+    except Exception:
+        live.live_lock.release()
+        raise
+    return {"run_id": run["id"]}
+
+
 ACTIVITY_LINGER_S = 10
 STAGE_ACTIVITY = {"diagnosis": "diagnosing", "patch": "patching", "validation": "validating", "deploy": "validating"}
 
@@ -127,7 +143,7 @@ async def activity() -> dict:
         if running:
             return {**base, "state": STAGE_ACTIVITY[running]}
         live_step = (run.get("live") or {}).get("step")
-        if not started and live_step in (None, "starting", "resetting", "leaking"):
+        if not started and live_step in (None, "starting", "resetting", "leaking", "deploying"):
             return {**base, "state": "preparing"}
         return {**base, "state": "incident"}
     age = (datetime.now(timezone.utc) - datetime.fromisoformat(run["updated_at"])).total_seconds()

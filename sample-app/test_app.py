@@ -29,3 +29,13 @@ def test_leak_does_not_retain_memory():
         client.get("/leak")
     held = sum(len(chunk) for chunk in getattr(sample, "leak_store", []))
     assert held < 30 * 1024 * 1024, f"{held // (1024 * 1024)} MiB still held after repeated /leak calls"
+
+
+def test_checkout_healthy_by_default():
+    assert all(client.get("/api/checkout").status_code == 200 for _ in range(10))
+
+
+def test_requests_counted_by_status_and_release():
+    client.get("/api/checkout")
+    body = client.get("/metrics").get_data(as_text=True)
+    assert 'sample_app_requests_total{release="stable",status="200"}' in body

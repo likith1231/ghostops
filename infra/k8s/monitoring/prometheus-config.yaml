@@ -125,3 +125,16 @@ data:
             annotations:
               summary: "sample-app memory usage above 80% of limit"
               description: "Pod {{ $labels.pod }} is at risk of OOMKill"
+
+          # Use case C1: a release that makes requests fail (canary regression).
+          - alert: SampleAppHighErrorRate
+            expr: |
+              sum by (release) (rate(sample_app_requests_total{status=~"5.."}[1m]))
+              / sum by (release) (rate(sample_app_requests_total[1m])) > 0.2
+            for: 30s
+            labels:
+              severity: critical
+              component: sample-app
+            annotations:
+              summary: "sample-app release {{ $labels.release }} is failing over 20% of requests"
+              description: "Release {{ $labels.release }} error rate {{ $value | humanizePercentage }}"

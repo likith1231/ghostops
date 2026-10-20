@@ -372,6 +372,13 @@ def create_pr(
                 "Could not switch back to %s — manual cleanup may be needed.",
                 original_branch,
             )
+        else:
+            # The fix lives on the remote (and in the PR); a local copy of every
+            # fix branch would pile up with each incident.
+            try:
+                _run_git("branch", "-D", branch_name, cwd=repo)
+            except subprocess.CalledProcessError:
+                logger.warning("Could not delete local branch %s.", branch_name)
 
 
 # ---------------------------------------------------------------------------

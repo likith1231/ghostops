@@ -84,8 +84,8 @@ DOMAIN_BASE=$(base_domain)
 NODE_IP=$(ip route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')
 
 say "Building the sample app image"
-docker build -t ghostops-sample-app:v2 sample-app
-docker save ghostops-sample-app:v2 | sudo k3s ctr images import - >/dev/null
+docker build -t ghostops-sample-app:v4 sample-app
+docker save ghostops-sample-app:v4 | sudo k3s ctr images import - >/dev/null
 
 say "Deploying the monitoring stack and sample app"
 kubectl apply -f infra/k8s/monitoring/namespace.yaml

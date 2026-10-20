@@ -115,3 +115,24 @@ def test_cors_rejects_other_origin():
 def test_metrics_endpoint_exposes_gauges():
     body = client.get("/metrics").text
     assert "ghostops_incidents_total" in body and "ghostops_prs_created" in body
+
+
+def test_feedback_endpoint(db):
+    _log(db, True, pr=True)
+    data = client.get("/api/incidents/feedback").json()
+    assert data["prs"] == 1 and data["acceptance_rate"] is None
+
+
+def test_feedback_sync_endpoint(db):
+    from unittest.mock import MagicMock
+
+    _log(db, True, pr=True)
+    gh = MagicMock(status_code=200)
+    gh.json.return_value = {"state": "closed", "merged_at": "2026-10-01T00:00:00Z"}
+    with patch("agents.feedback.requests.get", return_value=gh):
+        data = client.post("/api/incidents/feedback/sync").json()
+    assert data["checked"] == 1 and data["merged"] == 1 and data["acceptance_rate"] == 100.0
+
+
+def test_feedback_route_not_shadowed_by_incident_id():
+    assert client.get("/api/incidents/feedback").status_code == 200

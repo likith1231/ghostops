@@ -40,7 +40,7 @@ load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
 # Now that the path is set up, import the agent pipeline.
 from agents.crew import run_pipeline  # noqa: E402
-from agents.knowledge_base import init_db  # noqa: E402
+from agents.knowledge_base import init_db, past_incident_context  # noqa: E402
 
 # Initialise the SQLite knowledge base (creates DB + table if needed).
 init_db()
@@ -61,6 +61,8 @@ SAMPLE_APP_TESTS: str = os.getenv(
 POD_LOG_LINES: int = int(os.getenv("POD_LOG_LINES", "20"))
 POD_NAMESPACE: str = os.getenv("POD_NAMESPACE", "default")
 MEMORY_HISTORY_S: int = int(os.getenv("MEMORY_HISTORY_S", "300"))
+# B1 (memory leak -> AI fix) and C1 (canary regression -> rollback).
+HANDLED_ALERTS = {"SampleAppHighMemory", "SampleAppHighErrorRate"}
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -278,7 +280,7 @@ def _read_source_file(path: str) -> dict[str, str]:
 # Pipeline runner (background)
 # ---------------------------------------------------------------------------
 # One incident at a time (shared with /api/simulate): the deployer switches git branches to open the PR.
-from backend import live  # noqa: E402
+from backend import canary, live  # noqa: E402
 from backend.runs import pipeline_lock as _pipeline_lock  # noqa: E402
 from backend.runs import store as run_store  # noqa: E402
 
@@ -295,9 +297,30 @@ def _process_alert(alert: dict[str, Any]) -> None:
         logger.warning("Pipeline already running — skipping alert for pod=%s", pod_name)
         return
     try:
-        _run_alert_pipeline(alert, pod_name)
+        if alert.get("labels", {}).get("alertname") == canary.ALERT:
+            _run_canary_alert(alert)
+        else:
+            _run_alert_pipeline(alert, pod_name)
     finally:
         _pipeline_lock.release()
+
+
+def _run_canary_alert(alert: dict[str, Any]) -> None:
+    """Use case C1: diagnose a release regression from cluster state, roll back, verify."""
+    labels = alert.get("labels", {})
+    run_id = live.claim_waiting_run() or run_store.create(
+        "live", f"Live alert: {canary.ALERT} (release {labels.get('release', '?')})"
+    )["id"]
+    run_store.set_context(run_id, {"alert_type": "error_rate_high", "metrics": {}, "logs": [alert.get("annotations", {}).get("summary", "")]})
+    try:
+        result = canary.run_canary_pipeline(
+            alert, on_stage=lambda stage, state, data: run_store.update_stage(run_id, stage, state, data)
+        )
+        passed = result["validation_result"].get("passed") is True
+        run_store.finish(run_id, "passed" if passed else "failed", result=result)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Canary remediation failed: %s", exc, exc_info=True)
+        run_store.finish(run_id, "error", error=f"Remediation failed: {exc}")
 
 
 def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
@@ -324,7 +347,8 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         "logs": logs,
         "metrics": metrics,
         "source_files": source_files,
-        "past_incidents": [],  # knowledge base integration comes later
+        # What happened last time: diagnoses, fixes and whether a human merged them.
+        "past_incidents": past_incident_context("memory_high"),
     }
 
     logger.info(
@@ -441,7 +465,7 @@ async def receive_alert(request: Request, background_tasks: BackgroundTasks) -> 
         pod_name = labels.get("pod", "")
 
         # ---- Skip non-actionable alerts --------------------------------
-        if alert_name != "SampleAppHighMemory" or alert_status != "firing":
+        if alert_name not in HANDLED_ALERTS or alert_status != "firing":
             logger.info(
                 "Ignoring alert: name=%s status=%s", alert_name, alert_status
             )
