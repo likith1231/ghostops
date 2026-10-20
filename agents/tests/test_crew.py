@@ -44,7 +44,7 @@ def test_safe_json_invalid_returns_raw():
 # ---- mock-mode pipeline -------------------------------------------------------
 def test_mock_pipeline_result_shape():
     result, *_ = _run()
-    assert set(result) == {"diagnosis", "patch", "validation_result", "pr_result", "shield"}
+    assert set(result) == {"diagnosis", "patch", "validation_result", "pr_result", "shield", "risk"}
     assert result["diagnosis"]["root_cause"] == "ci_test_failure"
     assert result["validation_result"]["passed"] is True
 

@@ -98,8 +98,8 @@ def sync_pr_outcomes(*, db_path: str | Path | None = None) -> dict[str, int]:
     return counts
 
 
-def acceptance(*, db_path: str | Path | None = None) -> dict[str, Any]:
-    """How human reviewers treated GhostOps' PRs."""
+def acceptance(root_cause: str | None = None, *, db_path: str | Path | None = None) -> dict[str, Any]:
+    """How human reviewers treated GhostOps' PRs (optionally for one root cause)."""
     path = Path(db_path) if db_path else knowledge_base._DB_PATH
     empty = {"prs": 0, "merged": 0, "closed": 0, "superseded": 0, "open": 0, "unknown": 0, "acceptance_rate": None, "last_checked": None}
     if not path.exists():
@@ -107,7 +107,10 @@ def acceptance(*, db_path: str | Path | None = None) -> dict[str, Any]:
     knowledge_base.init_db(path)
     conn = sqlite3.connect(str(path))
     try:
-        rows = conn.execute("SELECT pr_state, pr_checked_at FROM incidents WHERE pr_created = 1").fetchall()
+        if root_cause:
+            rows = conn.execute("SELECT pr_state, pr_checked_at FROM incidents WHERE pr_created = 1 AND root_cause = ?", (root_cause,)).fetchall()
+        else:
+            rows = conn.execute("SELECT pr_state, pr_checked_at FROM incidents WHERE pr_created = 1").fetchall()
     finally:
         conn.close()
     out = dict(empty, prs=len(rows))

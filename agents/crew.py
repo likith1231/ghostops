@@ -27,7 +27,7 @@ from typing import Any
 
 from crewai import Crew, Process
 
-from agents import correlation, governance, mock_llm, shield
+from agents import blast_radius, correlation, feedback, governance, mock_llm, risk, shield
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -209,6 +209,24 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
     # ----- 4. DEPLOYMENT ACTION (auto-PR on validated pass) -----------
     pr_result: dict[str, Any] = {"pr_created": False, "reason": "skipped"}
 
+    # ----- RISK: how much autonomy this fix gets -------------------------------
+    risk_report = None
+    if validation_result.get("passed") is True:
+        try:
+            rate = feedback.acceptance(str(diagnosis.get("root_cause", "")))["acceptance_rate"]
+        except Exception:  # noqa: BLE001
+            rate = None
+        risk_report = risk.score(
+            diagnosis=diagnosis, patch=patch, validation=validation_result,
+            blast=blast_radius.analyze(diff_text, original_content), shield=shield_report,
+            acceptance_rate=rate, occurrences=int(failure_context.get("occurrences", 1) or 1),
+            regression_test=bool(patch.get("regression_test")),
+        )
+        governance.record(
+            "risk", risk_report["level"], f"score {risk_report['score']} → {risk_report['decision']}",
+            run_ref=run_ref, evidence={"factors": risk_report["factors"]},
+        )
+
     notify("deploy", "running", {})
     existing_pr = (
         correlation.open_pr_for(str(diagnosis.get("root_cause", "")), patch.get("file_path") or file_path)
@@ -227,14 +245,7 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         try:
             from agents.deployer import create_pr
 
-            pr_result = create_pr(
-                pipeline_result={
-                    "diagnosis": diagnosis,
-                    "patch": patch,
-                    "validation_result": validation_result,
-                },
-                failure_context=failure_context,
-            )
+            pr_result = _deliver(diagnosis, patch, validation_result, risk_report, failure_context, run_ref, create_pr)
             logger.info("PR result: %s", pr_result)
         except Exception as exc:  # noqa: BLE001
             logger.error("Deployer failed: %s", exc, exc_info=True)
@@ -270,7 +281,34 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None) -
         "validation_result": validation_result,
         "pr_result": pr_result,
         "shield": shield_report,
+        "risk": risk_report,
     }
+
+
+def _deliver(diagnosis, patch, validation_result, risk_report, failure_context, run_ref, create_pr) -> dict[str, Any]:
+    """Open the PR the way the risk level allows: auto-merge to staging, review, or review + page."""
+    from agents import deployer
+
+    decision = (risk_report or {}).get("decision", "open_pr")
+    pipeline_result = {"diagnosis": diagnosis, "patch": patch, "validation_result": validation_result, "risk": risk_report}
+    staging = os.getenv("STAGING_BRANCH", "staging")
+    # Without a token there is no PR to place anywhere: don't ask GitHub about branches.
+    to_staging = decision == "auto_merge_staging" and bool(deployer.GITHUB_TOKEN) and deployer.branch_exists(staging)
+    result = create_pr(pipeline_result=pipeline_result, failure_context=failure_context, base=staging if to_staging else None)
+    if not result.get("pr_created"):
+        return result
+    result["decision"] = decision
+    number = result.get("pr_number")
+    if to_staging and governance.allow("auto_merge", run_ref=run_ref):
+        merged = deployer.merge_pr(number)
+        result["auto_merged"] = merged.get("merged", False)
+        governance.record("auto_merge", "merged" if merged.get("merged") else "failed", f"PR #{number} into {staging}", run_ref=run_ref, evidence=merged)
+    elif decision == "open_pr_and_page":
+        result["labelled"] = deployer.label_pr(number, ["needs-human", "ghostops-high-risk"])
+        paged = deployer.page_human(f"high-risk fix for {diagnosis.get('root_cause')} (PR #{number})", {"pr": result.get("pr_url"), "risk": risk_report})
+        result["paged"] = paged.get("paged", False)
+        governance.record("page", "sent" if paged.get("paged") else "skipped", paged.get("reason", "") or "pager notified", run_ref=run_ref, evidence=paged)
+    return result
 
 
 # ---------------------------------------------------------------------------
