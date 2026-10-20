@@ -52,6 +52,37 @@ export interface Run {
   stages: Record<StageName, { status: StageStatus; data: Record<string, unknown> }>;
   result: { diagnosis: Diagnosis; patch: Patch; validation_result: Validation; pr_result: PrResult } | null;
   error: string | null;
+  /** What the pipeline was given: telemetry only, never source files. */
+  context: { alert_type?: string; metrics?: Record<string, { ts?: string; value: number }[]>; logs?: string[] } | null;
+  /** A live cluster incident before the pipeline starts: leaking, then waiting for the real alert. */
+  live: LiveProgress | null;
+}
+
+export interface LiveProgress {
+  step: "starting" | "resetting" | "leaking" | "waiting_alert" | "alert_firing";
+  reset?: boolean;
+  pod?: string;
+  leaked_mib: number;
+  memory: { ts: number; value: number }[];
+  limit: number | null;
+  alert: "inactive" | "pending" | "firing";
+}
+
+export type ActivityState = "idle" | "preparing" | "incident" | "diagnosing" | "patching" | "validating" | "healed" | "failed";
+
+export interface Activity {
+  state: ActivityState;
+  run_id?: string;
+  title?: string;
+  status?: RunStatus;
+}
+
+export interface LiveStatus {
+  ready: boolean;
+  pod?: string;
+  alert?: string;
+  busy: boolean;
+  error?: string;
 }
 
 export interface Status {
@@ -143,6 +174,9 @@ export const api = {
   recent: (limit = 12) => request<Incident[]>(`/api/incidents/recent?limit=${limit}`),
   incident: (id: number) => request<Incident>(`/api/incidents/${id}`),
   usecases: () => request<UseCase[]>("/api/usecases"),
+  activity: () => request<Activity>("/api/activity"),
+  liveStatus: () => request<LiveStatus>("/api/live/status"),
+  liveLeak: () => request<{ run_id: string }>("/api/live/leak", { method: "POST" }),
   detect: (body: Record<string, unknown>) =>
     request<{ detections: Detection[] }>("/api/detect", { method: "POST", body: JSON.stringify(body) }),
 };

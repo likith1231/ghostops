@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { api, type Incident } from "@/lib/api";
-import DiffView from "./DiffView";
+import { AnimatePresence } from "framer-motion";
+import CodeDiff from "./CodeDiff";
+import Replay from "./Replay";
 
 function when(ts: string) {
   const d = new Date(ts);
@@ -12,6 +14,16 @@ function when(ts: string) {
 export default function Incidents({ refreshKey }: { refreshKey: number }) {
   const [rows, setRows] = useState<Incident[]>([]);
   const [open, setOpen] = useState<Incident | null>(null);
+  const [replay, setReplay] = useState<Incident | null>(null);
+
+  // The command palette asks for a replay by incident id.
+  useEffect(() => {
+    const onReplay = (e: Event) => {
+      api.incident((e as CustomEvent<number>).detail).then(setReplay).catch(() => undefined);
+    };
+    window.addEventListener("ghostops:replay", onReplay);
+    return () => window.removeEventListener("ghostops:replay", onReplay);
+  }, []);
 
   useEffect(() => {
     api.recent(12).then(setRows).catch(() => setRows([]));
@@ -26,9 +38,21 @@ export default function Incidents({ refreshKey }: { refreshKey: number }) {
     }
   };
 
-  if (!rows.length) return <p className="text-sm text-mist">The knowledge base is empty — every run you trigger lands here.</p>;
+  const player = (
+    <AnimatePresence>{replay && <Replay key={replay.id} incident={replay} onClose={() => setReplay(null)} />}</AnimatePresence>
+  );
+
+  if (!rows.length)
+    return (
+      <>
+        <p className="text-sm text-mist">The knowledge base is empty — every run you trigger lands here.</p>
+        {player}
+      </>
+    );
 
   return (
+    <>
+    {player}
     <div className="glass overflow-hidden rounded-2xl">
       {rows.map((r) => (
         <div key={r.id} className="border-b border-white/5 last:border-0">
@@ -42,17 +66,23 @@ export default function Incidents({ refreshKey }: { refreshKey: number }) {
           </button>
           {open?.id === r.id && (
             <div className="space-y-3 px-5 pb-5">
-              <p className="text-sm text-white/80">{open.outcome_summary}</p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <p className="max-w-3xl text-sm text-white/80">{open.outcome_summary}</p>
+                <button onClick={() => setReplay(open)} className="cut-corners shimmer bg-arc px-4 py-1.5 text-sm font-semibold text-void">
+                  ▶ Replay
+                </button>
+              </div>
               {open.pr_url && (
-                <a href={open.pr_url} target="_blank" rel="noreferrer" className="text-sm text-ghost hover:underline">
+                <a href={open.pr_url} target="_blank" rel="noreferrer" className="text-sm text-arc hover:underline">
                   {open.pr_url}
                 </a>
               )}
-              <DiffView diff={open.patch_diff ?? ""} />
+              <CodeDiff diff={open.patch_diff ?? ""} />
             </div>
           )}
         </div>
       ))}
     </div>
+    </>
   );
 }

@@ -24,7 +24,7 @@ export default function Section({
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         className="mb-10 max-w-3xl"
       >
-        <div className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-ghost">{eyebrow}</div>
+        <div className="mb-3 font-mono text-xs uppercase tracking-[0.3em] text-arc"><span className="text-arc/40">// </span>{eyebrow}</div>
         <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">{title}</h2>
         {lede && <p className="mt-4 text-base leading-relaxed text-mist sm:text-lg">{lede}</p>}
       </motion.div>

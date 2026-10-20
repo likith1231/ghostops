@@ -1,8 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useScroll, useTransform } from "framer-motion";
 import dynamic from "next/dynamic";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import Backdrop from "@/components/Backdrop";
+import CommandPalette from "@/components/CommandPalette";
 import DetectorLab from "@/components/DetectorLab";
 import HowItWorks from "@/components/HowItWorks";
 import Incidents from "@/components/Incidents";
@@ -10,10 +12,12 @@ import LiveRun from "@/components/LiveRun";
 import Nav from "@/components/Nav";
 import Section from "@/components/Section";
 import Stats from "@/components/Stats";
+import Ticker from "@/components/Ticker";
 import UseCases from "@/components/UseCases";
+import { useActivityFeed } from "@/lib/activity";
 import { useBackend } from "@/lib/useBackend";
 
-const HeroScene = dynamic(() => import("@/components/three/HeroScene"), { ssr: false });
+const AiCore = dynamic(() => import("@/components/three/AiCore"), { ssr: false });
 
 const HERO_FACTS = [
   ["17", "catalogued failure types"],
@@ -24,31 +28,37 @@ const HERO_FACTS = [
 
 export default function Home() {
   const backend = useBackend();
+  useActivityFeed();
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  // Scrolling out of the hero: the hologram drifts up and fades, the headline lifts a little.
+  const hero = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({ target: hero, offset: ["start start", "end start"] });
+  const coreY = useTransform(scrollYProgress, [0, 1], [0, -160]);
+  const coreScale = useTransform(scrollYProgress, [0, 1], [1, 0.82]);
+  const coreOpacity = useTransform(scrollYProgress, [0, 0.85], [1, 0]);
+  const textY = useTransform(scrollYProgress, [0, 1], [0, -70]);
 
   return (
     <main id="top" className="relative">
       {/* Nav sits outside the isolated content so nothing inside can paint over it. */}
       <Nav backend={backend} />
+      <CommandPalette />
 
-      <div className="relative isolate z-0">
-        {/* Hero */}
-        <section className="relative h-[100svh] min-h-[640px] w-full overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_60%_40%,rgba(29,233,182,0.12),transparent_55%),radial-gradient(ellipse_at_20%_80%,rgba(167,139,250,0.12),transparent_50%)]" />
-          <div className="absolute inset-0">
-            <HeroScene />
-          </div>
-          {/* Keeps the headline readable over the scene on narrow screens. */}
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-void/30 via-void/55 to-void/20 md:bg-gradient-to-r md:from-void/70 md:via-void/20 md:to-transparent" />
-          <div className="pointer-events-none relative z-10 mx-auto flex h-full max-w-7xl flex-col justify-center px-4 sm:px-8">
+      <Backdrop />
+
+      <div className="relative isolate z-10">
+        {/* Hero: headline left, the AI core with its HUD right (below on phones). */}
+        <section ref={hero} className="relative grid min-h-[100svh] w-full items-center gap-6 px-4 pb-16 pt-28 sm:px-8 lg:px-[max(2rem,calc((100vw_-_80rem)/2_+_2rem))] lg:pb-10">
+          <motion.div style={{ y: textY }} className="relative z-10 max-w-2xl lg:max-w-[46%]">
             <motion.div
               initial={{ opacity: 0, y: 30 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-              className="max-w-2xl"
             >
-              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-ghost/30 bg-ghost/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.25em] text-ghost">
+              <div className="mb-5 inline-flex items-center gap-2 border border-arc/30 bg-arc/10 px-3 py-1 font-mono text-[11px] uppercase tracking-[0.3em] text-arc [clip-path:polygon(8px_0,100%_0,100%_calc(100%-8px),calc(100%-8px)_100%,0_100%,0_8px)]">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-arc" />
                 Autonomous SRE · MAPE-K
               </div>
               <h1 className="text-5xl font-semibold leading-[1.02] tracking-tight sm:text-7xl">
@@ -60,10 +70,10 @@ export default function Home() {
                 GhostOps detects a failure, diagnoses its root cause, writes the patch, proves it in a sandbox — and hands you a
                 pull request. Monitoring that finally closes the loop.
               </p>
-              <div className="pointer-events-auto mt-8 flex flex-wrap gap-3">
+              <div className="mt-8 flex flex-wrap gap-3">
                 <a
                   href="#pipeline"
-                  className="rounded-full bg-ghost px-6 py-3 font-semibold text-void shadow-[0_0_40px_rgba(124,247,228,0.4)] transition hover:brightness-110"
+                  className="cut-corners shimmer bg-arc px-6 py-3 font-semibold text-void shadow-[0_0_40px_rgba(56,217,255,0.45)] transition hover:brightness-110"
                 >
                   Trigger a live incident
                 </a>
@@ -71,7 +81,7 @@ export default function Home() {
                   href="https://github.com/likith1231/ghostops"
                   target="_blank"
                   rel="noreferrer"
-                  className="glass rounded-full px-6 py-3 font-semibold text-white transition hover:border-white/30"
+                  className="cut-corners border border-arc/30 bg-arc/5 px-6 py-3 font-semibold text-white transition hover:bg-arc/15"
                 >
                   View the code
                 </a>
@@ -81,7 +91,7 @@ export default function Home() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6, duration: 1 }}
-              className="mt-14 grid max-w-2xl grid-cols-2 gap-6 sm:grid-cols-4"
+              className="mt-12 grid max-w-2xl grid-cols-2 gap-6 border-t border-arc/15 pt-6 sm:grid-cols-4"
             >
               {HERO_FACTS.map(([n, label]) => (
                 <div key={label}>
@@ -90,14 +100,24 @@ export default function Home() {
                 </div>
               ))}
             </motion.dl>
-          </div>
-          <div className="absolute bottom-6 left-1/2 z-10 -translate-x-1/2 font-mono text-[10px] uppercase tracking-[0.4em] text-mist/70">
-            scroll
-          </div>
+          </motion.div>
+
+          {/* The hologram: full-bleed behind the hero on desktop, its own square below the text on phones. */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 1.4, delay: 0.2 }}
+            className="relative mx-auto aspect-square w-full max-w-[480px] lg:absolute lg:inset-0 lg:z-0 lg:aspect-auto lg:max-w-none"
+          >
+            <motion.div style={{ y: coreY, scale: coreScale, opacity: coreOpacity }} className="h-full w-full">
+              <AiCore />
+            </motion.div>
+          </motion.div>
         </section>
 
+        <Ticker refreshKey={refreshKey} />
+
         <div className="relative">
-          <div className="grid-floor pointer-events-none absolute inset-x-0 top-0 h-[900px]" />
 
           <Section
             id="pipeline"
@@ -145,7 +165,7 @@ export default function Home() {
         </div>
       </div>
 
-      <footer className="border-t border-white/5">
+      <footer className="relative z-10 border-t border-white/5">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-10 text-sm text-mist sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div>
             <span className="font-semibold text-white">GhostOps</span> — Autonomous Remediation from Code to Cloud

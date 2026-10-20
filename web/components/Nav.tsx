@@ -1,6 +1,7 @@
 "use client";
 
 import type { BackendState } from "@/lib/useBackend";
+import { openPalette } from "./CommandPalette";
 
 const LINKS = [
   ["Live", "#pipeline"],
@@ -33,7 +34,7 @@ export default function Nav({ backend }: { backend: BackendState }) {
     <header className="fixed inset-x-0 top-0 z-[100] isolate">
       <nav className="glass !bg-[#070910]/85 mx-auto mt-3 flex max-w-7xl items-center justify-between gap-4 rounded-2xl px-4 py-3 sm:mx-6 xl:mx-auto">
         <a href="#top" className="flex items-center gap-2 font-semibold tracking-tight text-white">
-          <span className="grid h-7 w-7 place-items-center rounded-lg bg-ghost/15 text-ghost">◐</span>
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-arc/15 text-arc">◐</span>
           GhostOps
         </a>
         <div className="hidden items-center gap-6 text-sm text-mist md:flex">
@@ -43,7 +44,17 @@ export default function Nav({ backend }: { backend: BackendState }) {
             </a>
           ))}
         </div>
-        <BackendPill backend={backend} />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openPalette}
+            className="hidden items-center gap-1.5 rounded-lg border border-arc/20 bg-arc/5 px-2.5 py-1 font-mono text-[11px] text-mist transition hover:text-white sm:flex"
+            aria-label="Open command palette"
+          >
+            <kbd>Ctrl</kbd>
+            <kbd>K</kbd>
+          </button>
+          <BackendPill backend={backend} />
+        </div>
       </nav>
     </header>
   );

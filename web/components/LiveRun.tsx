@@ -2,9 +2,10 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, streamRun, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
+import { STAGES, api, streamRun, type Activity, type LiveProgress, type LiveStatus, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
 import type { BackendState } from "@/lib/useBackend";
-import DiffView from "./DiffView";
+import CodeDiff from "./CodeDiff";
+import MemoryChart from "./MemoryChart";
 import OfflineNotice from "./OfflineNotice";
 import type { NodeState } from "./three/PipelineScene";
 
@@ -13,10 +14,18 @@ const PipelineScene = dynamic(() => import("./three/PipelineScene"), {
   loading: () => <div className="grid h-full place-items-center font-mono text-xs text-mist">loading scene…</div>,
 });
 
+/** Minimum time each pipeline step stays on screen. */
+const STEP_MS = 1100;
+
 const STAGE_TO_NODE: Record<string, NodeState> = { pending: "idle", running: "running", done: "done", error: "error" };
 
 function nodeStates(run: Run | null): NodeState[] {
   if (!run) return ["idle", "idle", "idle", "idle", "idle"];
+  // A live incident: the Alert stage is working until Prometheus fires and the pipeline starts.
+  const pipelineStarted = STAGES.some((s) => run.stages[s].status !== "pending");
+  if (run.live && !pipelineStarted) {
+    return [run.status === "error" ? "error" : "running", "idle", "idle", "idle", "idle"];
+  }
   const st = (s: StageName) => STAGE_TO_NODE[run.stages[s].status];
   let validation = st("validation");
   if (validation === "done" && (run.stages.validation.data as Validation).passed === false) validation = "error";
@@ -35,7 +44,7 @@ function seconds(run: Run): string {
 
 function Card({ title, state, children }: { title: string; state: string; children: React.ReactNode }) {
   const tone =
-    state === "running" ? "text-ghost" : state === "done" ? "text-ok" : state === "error" ? "text-bad" : "text-mist";
+    state === "running" ? "text-arc" : state === "done" ? "text-ok" : state === "error" ? "text-bad" : "text-mist";
   return (
     <div className="glass min-w-0 rounded-2xl p-5">
       <div className="mb-3 flex items-center justify-between">
@@ -51,10 +60,77 @@ function Placeholder() {
   return <p className="text-mist">Waiting for this stage…</p>;
 }
 
+const LIVE_STEPS: { key: LiveProgress["step"][]; label: string }[] = [
+  { key: ["resetting"], label: "Reset sample-app (clear old leak / alert)" },
+  { key: ["leaking"], label: "Leak memory in the real pod (10 MiB per request)" },
+  { key: ["waiting_alert"], label: "Prometheus: memory > 80% of limit for 30 s" },
+  { key: ["alert_firing"], label: "Alertmanager → GhostOps webhook → pipeline" },
+];
+const STEP_ORDER: LiveProgress["step"][] = ["starting", "resetting", "leaking", "waiting_alert", "alert_firing"];
+
+/** Real progress of a live cluster incident, before the agents take over. */
+function LivePanel({ live, run }: { live: LiveProgress; run: Run }) {
+  const at = STEP_ORDER.indexOf(live.step);
+  const pipelineStarted = STAGES.some((s) => run.stages[s].status !== "pending");
+  const latest = live.memory.at(-1)?.value;
+  const pct = latest && live.limit ? Math.min(100, (latest / live.limit) * 100) : null;
+  return (
+    <div className="glass rounded-2xl p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-semibold text-white">Live cluster incident</h3>
+        <span className="font-mono text-[11px] uppercase tracking-widest text-mist">pod {live.pod ?? "…"}</span>
+      </div>
+      <ol className="space-y-2.5">
+        {LIVE_STEPS.map(({ key, label }) => {
+          const i = STEP_ORDER.indexOf(key[0]);
+          const skipped = key[0] === "resetting" && !live.reset; // only shown when a reset actually ran
+          const state = pipelineStarted || at > i ? "done" : at === i ? (run.status === "error" ? "error" : "running") : "pending";
+          if (skipped) return null;
+          return (
+            <li key={label} className="flex items-center gap-3 text-sm">
+              <span
+                className={`grid h-5 w-5 place-items-center rounded-full border text-[10px] ${
+                  state === "done" ? "border-ok bg-ok/15 text-ok" : state === "running" ? "pulse-ring border-arc bg-arc/15 text-arc" : state === "error" ? "border-bad text-bad" : "border-white/15 text-mist"
+                }`}
+              >
+                {state === "done" ? "✓" : state === "error" ? "✕" : ""}
+              </span>
+              <span className={state === "pending" ? "text-mist" : "text-white/85"}>{label}</span>
+              {key[0] === "leaking" && live.leaked_mib > 0 && <span className="font-mono text-xs text-arc">{live.leaked_mib} MiB</span>}
+              {key[0] === "waiting_alert" && at >= i && (
+                <span className={`font-mono text-xs ${live.alert === "firing" ? "text-bad" : live.alert === "pending" ? "text-warn" : "text-mist"}`}>
+                  alert {live.alert}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      {pct !== null && (
+        <div className="mt-4">
+          <div className="mb-1 flex justify-between font-mono text-[11px] text-mist">
+            <span>memory (from Prometheus)</span>
+            <span className={pct > 80 ? "text-bad" : "text-arc"}>{pct.toFixed(0)}% of limit</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-white/5">
+            <div className={`h-full transition-all duration-700 ${pct > 80 ? "bg-bad" : "bg-arc"}`} style={{ width: `${pct}%` }} />
+          </div>
+          <div className="relative h-0">
+            <span className="absolute -top-2 h-2 w-px bg-white/40" style={{ left: "80%" }} title="alert threshold" />
+          </div>
+        </div>
+      )}
+      {run.status === "error" && <p className="mt-4 text-sm text-bad">{run.error}</p>}
+    </div>
+  );
+}
+
 export default function LiveRun({ backend, onFinished }: { backend: BackendState; onFinished: () => void }) {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [selected, setSelected] = useState("b1");
   const [run, setRun] = useState<Run | null>(null);
+  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
+  const following = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stop = useRef<(() => void) | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -64,38 +140,114 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     api.scenarios().then(setScenarios).catch(() => setScenarios([]));
   }, [backend.online]);
 
-  const cleanup = useCallback(() => {
+  // Incoming run versions are queued and shown one at a time, each for at least
+  // STEP_MS, so stages that finish in milliseconds (mock mode) are still seen in order.
+  const queue = useRef<Run[]>([]);
+  const lastVersion = useRef(-1);
+  const pacer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shown = useRef<Run | null>(null);
+
+  const stopStream = useCallback(() => {
     stop.current?.();
     if (poll.current) clearInterval(poll.current);
     stop.current = null;
     poll.current = null;
   }, []);
+
+  const cleanup = useCallback(() => {
+    stopStream();
+    if (pacer.current) clearTimeout(pacer.current);
+    pacer.current = null;
+    queue.current = [];
+    lastVersion.current = -1;
+  }, [stopStream]);
   useEffect(() => cleanup, [cleanup]);
+
+  const pump = useCallback(() => {
+    if (pacer.current) return;
+    const next = queue.current.shift();
+    if (!next) return;
+    const prev = shown.current;
+    shown.current = next;
+    setRun(next);
+    if (next.status !== "running") {
+      stopStream();
+      onFinished();
+      return;
+    }
+    // Only a visible stage change earns screen time; other updates (telemetry) pass straight through.
+    const changed = !prev || STAGES.some((s) => prev.stages[s].status !== next.stages[s].status);
+    pacer.current = setTimeout(() => {
+      pacer.current = null;
+      pump();
+    }, changed ? STEP_MS : 0);
+  }, [onFinished, stopStream]);
 
   const update = useCallback(
     (r: Run) => {
-      setRun(r);
-      if (r.status !== "running") {
-        cleanup();
-        onFinished();
-      }
+      if (r.version <= lastVersion.current) return; // polling can repeat versions
+      lastVersion.current = r.version;
+      queue.current.push(r);
+      pump();
     },
-    [cleanup, onFinished],
+    [pump],
   );
 
-  const trigger = async () => {
-    setError(null);
-    cleanup();
-    try {
-      const { run_id } = await api.simulate(selected);
+  /** Start following a run's live stream from a clean slate. */
+  const follow = useCallback(
+    (runId: string) => {
+      cleanup();
+      shown.current = null;
+      following.current = runId;
+      setRun(null); // clear the previous run at once instead of leaving its result on screen
       // SSE first; if the stream drops, fall back to polling.
-      stop.current = streamRun(run_id, update, () => {
-        poll.current = setInterval(() => api.run(run_id).then(update).catch(() => undefined), 1000);
+      stop.current = streamRun(runId, update, () => {
+        poll.current = setInterval(() => api.run(runId).then(update).catch(() => undefined), 1000);
       });
+    },
+    [cleanup, update],
+  );
+
+  const trigger = useCallback(async (scenario: string) => {
+    setError(null);
+    try {
+      const { run_id } = scenario === "live" ? await api.liveLeak() : await api.simulate(scenario);
+      follow(run_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  };
+  }, [follow]);
+
+  // Real alerts (Chaos Mesh, a leak, the demo script) start runs on the backend: follow them.
+  useEffect(() => {
+    const onActivity = (e: Event) => {
+      const next = (e as CustomEvent<{ next: Activity }>).detail.next;
+      if (next.run_id && next.status === "running" && next.run_id !== following.current) follow(next.run_id);
+    };
+    window.addEventListener("ghostops:activity", onActivity);
+    return () => window.removeEventListener("ghostops:activity", onActivity);
+  }, [follow]);
+
+  // Whether the real cluster is reachable for a live incident.
+  useEffect(() => {
+    if (!backend.online) return;
+    const check = () => api.liveStatus().then(setLiveStatus).catch(() => setLiveStatus(null));
+    check();
+    const id = setInterval(check, 10000);
+    return () => clearInterval(id);
+  }, [backend.online]);
+
+  // The command palette can start a scenario from anywhere on the page.
+  useEffect(() => {
+    const onTrigger = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      setSelected(id);
+      document.querySelector("#pipeline")?.scrollIntoView({ behavior: "smooth" });
+      trigger(id);
+    };
+    window.addEventListener("ghostops:trigger", onTrigger);
+    return () => window.removeEventListener("ghostops:trigger", onTrigger);
+  }, [trigger]);
 
   const states = nodeStates(run);
   // Our own run's state is live; the polled busy flag only matters for runs started elsewhere.
@@ -113,24 +265,36 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     <div className="space-y-6">
       <div className="glass relative isolate overflow-hidden rounded-3xl">
         <div className="relative z-40 flex flex-wrap items-center gap-2 p-4 sm:absolute sm:inset-x-0 sm:top-0">
+          <button
+            onClick={() => setSelected("live")}
+            disabled={!liveStatus?.ready}
+            title={liveStatus?.ready ? `Real leak in ${liveStatus.pod}; Prometheus fires the alert` : liveStatus?.error ?? "checking the cluster…"}
+            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
+              selected === "live" ? "border-bad/70 bg-bad/15 text-white" : "border-bad/30 bg-black/30 text-mist hover:text-white"
+            }`}
+          >
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
+            <span className="font-mono text-bad">LIVE</span> real cluster · memory leak
+          </button>
+          <span className="mx-1 h-4 w-px bg-white/10" />
           {(scenarios.length ? scenarios : [{ id: "b1", title: "Memory leak -> OOM" }]).map((s) => (
             <button
               key={s.id}
               onClick={() => setSelected(s.id)}
               className={`rounded-full border px-3 py-1.5 text-xs transition ${
                 selected === s.id
-                  ? "border-ghost/60 bg-ghost/15 text-white"
+                  ? "border-arc/60 bg-arc/15 text-white"
                   : "border-white/10 bg-black/30 text-mist hover:text-white"
               }`}
             >
-              <span className="mr-1.5 font-mono text-ghost">{s.id.toUpperCase()}</span>
+              <span className="mr-1.5 font-mono text-arc">{s.id.toUpperCase()}</span>
               {s.title.replace("->", "→")}
             </button>
           ))}
           <button
-            onClick={trigger}
+            onClick={() => trigger(selected)}
             disabled={!backend.online || !!busy}
-            className="ml-auto rounded-full bg-ghost px-4 py-2 text-sm font-semibold text-void shadow-[0_0_30px_rgba(124,247,228,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            className="ml-auto rounded-full bg-arc px-4 py-2 text-sm font-semibold text-void shadow-[0_0_30px_rgba(56,217,255,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? "Pipeline running…" : "Trigger incident"}
           </button>
@@ -152,6 +316,23 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
 
       {backend.online === false && <OfflineNotice />}
       {error && <div className="rounded-xl border border-bad/30 bg-bad/10 p-3 text-sm text-bad">{error}</div>}
+
+      {run?.live && <LivePanel live={run.live} run={run} />}
+
+      {(run?.live?.memory?.length ?? 0) > 1 ? (
+        <MemoryChart
+          key={run!.id}
+          metrics={{
+            memory_working_set: run!.live!.memory.map((m) => ({ value: m.value })),
+            ...(run!.live!.limit ? { memory_limit_bytes: [{ value: run!.live!.limit }] } : {}),
+          }}
+          fixed={v?.status === "done" ? validation?.passed === true : null}
+        />
+      ) : (
+        run?.context?.metrics && (
+          <MemoryChart key={run.id} metrics={run.context.metrics} fixed={v?.status === "done" ? validation?.passed === true : null} />
+        )
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="1 · Diagnosis" state={d?.status ?? "pending"}>
@@ -176,9 +357,9 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
         <Card title="2 · Patch" state={p?.status ?? "pending"}>
           {patch?.diff !== undefined ? (
             <>
-              {patch.file_path && <div className="font-mono text-xs text-ghost">{patch.file_path}</div>}
+              {patch.file_path && <div className="font-mono text-xs text-arc">{patch.file_path}</div>}
               <p>{patch.explanation}</p>
-              <DiffView diff={patch.diff ?? ""} maxHeight="12rem" />
+              <CodeDiff diff={patch.diff ?? ""} maxHeight="12rem" />
             </>
           ) : (
             <Placeholder />
@@ -214,7 +395,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
         <Card title="4 · Pull request" state={dep?.status ?? "pending"}>
           {pr?.reason || pr?.pr_created ? (
             pr.pr_created ? (
-              <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-ghost underline-offset-4 hover:underline">
+              <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-arc underline-offset-4 hover:underline">
                 {pr.pr_url}
               </a>
             ) : pr.reason === "mock_mode" ? (

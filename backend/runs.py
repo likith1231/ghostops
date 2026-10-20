@@ -34,6 +34,9 @@ class RunStore:
     def __init__(self, max_runs: int = 50) -> None:
         self._lock = threading.Lock()
         self._runs: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # Every version of every run, so a live stream can replay each change in order
+        # instead of only the latest state (fast stages would otherwise be skipped).
+        self._history: dict[str, list[dict[str, Any]]] = {}
         self._max_runs = max_runs
 
     def create(self, scenario: str, title: str) -> dict[str, Any]:
@@ -48,16 +51,21 @@ class RunStore:
             "stages": {s: {"status": "pending", "data": {}} for s in STAGES},
             "result": None,
             "error": None,
+            "context": None,
+            "live": None,
         }
         with self._lock:
             self._runs[run["id"]] = run
+            self._history[run["id"]] = [copy.deepcopy(run)]
             while len(self._runs) > self._max_runs:
-                self._runs.popitem(last=False)
+                old_id, _ = self._runs.popitem(last=False)
+                self._history.pop(old_id, None)
             return copy.deepcopy(run)
 
     def _touch(self, run: dict[str, Any]) -> None:
         run["version"] += 1
         run["updated_at"] = _now()
+        self._history.setdefault(run["id"], []).append(copy.deepcopy(run))
 
     def update_stage(self, run_id: str, stage: str, status: str, data: dict | None = None) -> None:
         with self._lock:
@@ -66,6 +74,30 @@ class RunStore:
                 return
             run["stages"][stage] = {"status": status, "data": copy.deepcopy(data or {})}
             self._touch(run)
+
+    def set_context(self, run_id: str, context: dict) -> None:
+        """Attach what the pipeline was given (alert type, metrics, log tail) for the dashboard."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                return
+            run["context"] = copy.deepcopy(context)
+            self._touch(run)
+
+    def set_live(self, run_id: str, live: dict) -> None:
+        """Progress of a live cluster incident before the pipeline starts (leak, alert)."""
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None or run["status"] in TERMINAL:
+                return
+            run["live"] = copy.deepcopy(live)
+            self._touch(run)
+
+    def latest(self) -> dict[str, Any] | None:
+        with self._lock:
+            if not self._runs:
+                return None
+            return copy.deepcopy(next(reversed(self._runs.values())))
 
     def finish(self, run_id: str, status: str, result: dict | None = None, error: str | None = None) -> None:
         if status not in TERMINAL:
@@ -86,6 +118,11 @@ class RunStore:
         with self._lock:
             run = self._runs.get(run_id)
             return copy.deepcopy(run) if run else None
+
+    def history(self, run_id: str, since: int = 0) -> list[dict[str, Any]]:
+        """Versions of a run from index *since* on (oldest first)."""
+        with self._lock:
+            return [copy.deepcopy(r) for r in self._history.get(run_id, [])[since:]]
 
     def list(self) -> list[dict[str, Any]]:
         """Most recent first."""
