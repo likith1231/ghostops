@@ -60,6 +60,8 @@ SAMPLE_APP_TESTS: str = os.getenv(
     str(_PROJECT_ROOT / "sample-app" / "test_app.py"),
 )
 POD_LOG_LINES: int = int(os.getenv("POD_LOG_LINES", "20"))
+# A deeper slice of the access log, for counterfactual replay of the incident's traffic.
+REPLAY_LOG_LINES: int = int(os.getenv("REPLAY_LOG_LINES", "500"))
 POD_NAMESPACE: str = os.getenv("POD_NAMESPACE", "default")
 MEMORY_HISTORY_S: int = int(os.getenv("MEMORY_HISTORY_S", "300"))
 # B1 (memory leak -> AI fix) and C1 (canary regression -> rollback).
@@ -128,7 +130,7 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Kubernetes log fetcher
 # ---------------------------------------------------------------------------
-def _fetch_pod_logs(pod_name: str, namespace: str = POD_NAMESPACE) -> list[str]:
+def _fetch_pod_logs(pod_name: str, namespace: str = POD_NAMESPACE, tail: int | None = None) -> list[str]:
     """Fetch the last *POD_LOG_LINES* lines from *pod_name* via the
     Kubernetes Python client.
 
@@ -149,7 +151,7 @@ def _fetch_pod_logs(pod_name: str, namespace: str = POD_NAMESPACE) -> list[str]:
         log_text: str = v1.read_namespaced_pod_log(
             name=pod_name,
             namespace=namespace,
-            tail_lines=POD_LOG_LINES,
+            tail_lines=tail or POD_LOG_LINES,
         )
         lines = [line for line in log_text.strip().splitlines() if line]
         logger.info(
@@ -368,6 +370,8 @@ def _run_alert_pipeline(alert: dict[str, Any], pod_name: str) -> None:
         "live", f"Live alert: {alert.get('labels', {}).get('alertname', 'alert')} on {pod_name or 'cluster'}"
     )["id"]
     failure_context["run_ref"] = run_id
+    if pod_name:
+        failure_context["replay_logs"] = _fetch_pod_logs(pod_name, tail=REPLAY_LOG_LINES)
     if alert.get("_incident"):
         correlation.attach_run(alert["_incident"], run_id)
     run_store.set_context(
