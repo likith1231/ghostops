@@ -135,7 +135,7 @@ knowledge base. See [`web/README.md`](web/README.md).
 
 ### Use-case coverage
 
-16 of the 17 catalogued use cases have a deterministic detector (`agents/detectors/`). Four work end to end:
+17 use cases are catalogued. 16 have a deterministic detector (`agents/detectors/`; C4 needs none, the failing test run is the alert). **Four are fixed end to end**; the other 13 are detected and diagnosed, and a human does the fix:
 
 | Use case | Trigger | Remediation |
 |---|---|---|
@@ -163,11 +163,27 @@ and background follow what GhostOps is actually doing (`GET /api/activity`).
 superseded when labelled `duplicate`) into the knowledge base. The dashboard shows the human acceptance
 rate, and every new diagnosis receives past incidents together with the reviewer's decision.
 
+## 🛡️ Safety & Trust
+
+A fix only reaches a human after it clears every gate, and every step is recorded.
+
+* **Prompt-injection shield** (`agents/shield.py`): logs and metrics are untrusted; instructions hidden in them never reach the model.
+* **Three gates before a PR:** the OPA file allowlist, the Docker sandbox (the app's tests), and the **blast-radius gate** (how much the patch changes).
+* **Regression test per fix**, proven to fail before the patch and pass after it, plus **counterfactual replay** of the incident's real traffic where the app is replayable.
+* **Risk score and graduated autonomy:** small, well-tested, high-confidence fixes may be auto-merged to staging; the rest wait for a person.
+* **Signed evidence:** each validated fix carries an Ed25519-signed bundle (diff hash, gate results, sandbox output hash, versions).
+* **Canary of the fix** and **post-merge / production verification** (real MTTR).
+* **Kill switch and tamper-evident audit trail:** every decision is hash-chained in the knowledge base.
+* **Learning:** the fix library reuses fixes humans merged (no LLM call), the feedback loop records reviewer decisions, and a **postmortem** is written for every incident.
+* **Incident deduplication and correlation:** repeats and related alerts join one incident (incidents silent for 2 h expire), and an **incident cost meter** shows what each run cost.
+
+The model is Claude Sonnet 5.5 by default; set `CLAUDE_MODEL` in `.env` to use another.
+
 ## ✅ Tests
 
 | Suite | What | Count |
 |---|---|---|
-| `pytest` | agents, detectors, backend, live mode, C1, feedback loop, PR flow against a real git repo, end-to-end runs through the real Docker sandbox | 316 |
+| `pytest` | agents, detectors, backend, live mode, C1, feedback loop, PR flow against a real git repo, end-to-end runs through the real Docker sandbox | 521 |
 | Rego (`conftest verify`) | the OPA allowlist, including path traversal | 10 |
 | Vitest | website logic: diff view, pipeline states, replay, charts, API client, activity feed | 26 |
 | e2e (`web/e2e/smoke.mjs`) | Chrome against the built site and a real backend: a C4 run validated by the sandbox, palette, detector lab, replay | 1 flow |
@@ -214,4 +230,4 @@ GhostOps is currently a localized Proof of Concept and is **not yet production-h
 *   **Vault in Dev Mode:** HashiCorp Vault is running in `-dev` mode with HTTP. In production, TLS and proper auto-unseal must be configured.
 *   **Manual OPA Updates:** The OPA Gatekeeper allowlist (`allowlist.rego`) strictly dictates which files the AI is permitted to patch. Currently, new authorized files (like `app.py` or `math_utils.py`) must be manually added to the policy.
 *   **API Rate Limits:** The multi-agent pipeline is token-heavy and reliant on the Claude API limits. Extensive debugging sessions may trigger rate-limiting errors (`429 Resource Exhausted`). Mock mode (`GHOSTOPS_MOCK_LLM=1`) runs everything else without a key.
-*   **Sample Workloads:** The end-to-end use cases run against the bundled sample app; the other catalogued use cases have detectors but no remediation yet.
+*   **Sample Workloads:** The end-to-end use cases run against the bundled sample app; the other 13 catalogued use cases (A2-A5, B2-B6, C2, C3, C5, C6) have detectors but no remediation yet. Most are infrastructure changes (limits, Services, NetworkPolicies, image tags) that a pytest sandbox cannot validate, so they are left to a human by design.
