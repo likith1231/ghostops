@@ -1,0 +1,63 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T13:11:46.207200+00:00",
+    "environment": {
+      "ghostops_commit": "7338be8c310ed067fcff80b26a6c7e037aba8496",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:c3a16af6af470b83a4fab61845b2385dddeafda3af6db8be78ee84d343f6bae7",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 1,
+          "files": 1,
+          "removed": 2
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": 4,
+        "verdict": "reproduced_and_fixed"
+      },
+      "fix_canary": null,
+      "opa_policy": "passed",
+      "regression_test": {
+        "failed_before": true,
+        "passed_after": true,
+        "path": "sample-app/test_ghostops_regression_memory.py",
+        "test_sha256": "be0f8cc3519d94b0acd7def47db7d61a48d75e0a857aa19cd829e4d7b7f2598f"
+      },
+      "sandbox": {
+        "output_sha256": "9c0ed28a9d9eaa2df357545547fb39509761131638881cf134a9410a2d54d37d",
+        "passed": true,
+        "summary": "PASS. The patch was applied in an isolated Docker sandbox and pytest exited with code 0. All 7 collected tests passed (100%), with 0 failures, 0 errors, 0 skipped and 0 deselected, in 0.12s. The environment was Python 3.11.15, pytest 9.1.1, pluggy 1.6.0, rootdir /workspace/sample-app. Passing tests: test_index, test_health, test_metrics_endpoint, test_leak_endpoint_responds, test_leak_does_not_retain_memory, test_checkout_healthy_by_default, test_requests_counted_by_status_and_release. The exit code is consistent with the pytest summary line, so there are no contradictory signals. The memory-leak regression test (test_leak_does_not_retain_memory) and the metrics/release-labelling test (test_requests_counted_by_status_and_release) both pass. Caveat: the verdict covers only the 7 tests in test_app.py. The 0.12s runtime suggests lightweight unit tests, so it gives no evidence about load, long-running memory behaviour, or production integration. Only the last 4,000 characters of output were provided, but the full session header and summary were visible, so nothing appears truncated. Verdict: the patch is cleared on test-suite grounds and may proceed to the next release stage."
+      }
+    },
+    "incident": {
+      "alert_type": "memory_high",
+      "confidence": "0.97",
+      "root_cause": "memory_leak",
+      "run_ref": null
+    },
+    "patch": {
+      "diff_sha256": "1bbf5d5d2b80df0759dd5fa851521c0918d9e397dc8a746522ade33d234fedab",
+      "explanation": "The /leak handler appended a 10 MiB string to the module-level leak_store on every request, and nothing ever removed entries. Process memory therefore grew without bound until it neared the 128 MiB container limit. The fix removes the single leak_store.append(...) line, so the handler no longer retains anything between requests. The endpoint still returns 200 {status: ok}, so test_leak_endpoint_responds keeps passing. leak_store stays empty, so test_leak_does_not_retain_memory passes (0 bytes he",
+      "file": "sample-app/app.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 0
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "none"
+    }
+  },
+  "key_fingerprint": "90a939c9b3d81548",
+  "signature": "SVCuJfXxeVGMpMUBBaSP2kDxc9RT5bsBC7LQbUoC2+AgPKUq2Er0qfBQP+EKAfCigFFt5WrcP3MemNbp6ke4Ag=="
+}
