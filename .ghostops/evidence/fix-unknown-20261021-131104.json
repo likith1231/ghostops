@@ -1,0 +1,58 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T13:11:03.784227+00:00",
+    "environment": {
+      "ghostops_commit": "7338be8c310ed067fcff80b26a6c7e037aba8496",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:c3a16af6af470b83a4fab61845b2385dddeafda3af6db8be78ee84d343f6bae7",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 3,
+          "files": 1,
+          "removed": 1
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": null,
+        "verdict": "not_applicable"
+      },
+      "fix_canary": null,
+      "opa_policy": "passed",
+      "regression_test": null,
+      "sandbox": {
+        "output_sha256": "f4b877fa33e8c3010ae77fab17cdc08d4df872ca5a192b70ad5761dd4e104ce6",
+        "passed": true,
+        "summary": "PASS. The patch was applied in an isolated Docker container and pytest exited with code 0. All 3 collected tests passed (test_display_name, test_display_name_empty_payload, test_display_name_missing_name) in 0.01s. There were no failures, errors, skips, or warnings in the output, and the edge cases (empty payload, missing name) are covered. Caveat: the suite has only 3 tests, so coverage is limited to what they exercise. On the evidence provided, the patch is cleared to proceed."
+      }
+    },
+    "incident": {
+      "alert_type": "app_exception",
+      "confidence": "0.85",
+      "root_cause": "unknown",
+      "run_ref": null
+    },
+    "patch": {
+      "diff_sha256": "96d7d6a7f45d215d774466345018b2fa3522a20b1c7f9a50ec6cb502616e55b8",
+      "explanation": "display_name() subscripted profile[\"name\"] without handling an empty upstream payload, so a None profile raised TypeError (and a missing 'name' key would raise KeyError), producing the HTTP 500 on GET /api/user/profile. The fix adds a single guard at the top of the function that returns \"anonymous\" when the profile is None/empty or has no usable 'name', which matches the function's documented contract and makes the existing tests test_display_name_empty_payload and test_display_name_missing_name",
+      "file": "sample-app/user_service.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 17
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "none"
+    }
+  },
+  "key_fingerprint": "90a939c9b3d81548",
+  "signature": "jJs/lx3Y7XirozzoxDo24PCGminlnqsBF4Lnr8hHCpzKE7XroiIO+nXcmcuC7xV6Ph3z3PwtwMIann0k20PQAg=="
+}
