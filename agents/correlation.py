@@ -28,6 +28,9 @@ from typing import Any
 from agents import knowledge_base
 
 CORRELATION_WINDOW_S = 600
+# Alertmanager re-notifies a firing alert at least hourly (repeat_interval), so an incident that has
+# heard nothing for this long is dead: its "resolved" message was lost (backend down, restart).
+STALE_AFTER_S = 7200
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS open_incidents (
@@ -87,6 +90,8 @@ def classify_alert(labels: dict[str, Any], *, db_path: str | Path | None = None)
     name, target, now = labels.get("alertname", "alert"), workload(labels), _now()
     conn = _connect(db_path)
     try:
+        cutoff = (now - timedelta(seconds=STALE_AFTER_S)).isoformat()
+        conn.execute("UPDATE open_incidents SET state = 'resolved', resolved_at = ? WHERE state = 'open' AND last_seen < ?", (now.isoformat(), cutoff))
         rows = [_row(r) for r in conn.execute("SELECT * FROM open_incidents WHERE workload = ? AND state = 'open' ORDER BY id DESC", (target,))]
         for inc in rows:
             if name in inc["alerts"]:
@@ -117,6 +122,20 @@ def attach_run(incident_id: int, run_ref: str, *, db_path: str | Path | None = N
     try:
         conn.execute("UPDATE open_incidents SET run_ref = ? WHERE id = ?", (run_ref, incident_id))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def close_open(*, workload_name: str | None = None, db_path: str | Path | None = None) -> int:
+    """Close open incidents (all, or one workload's); returns how many. Used to start a demo clean."""
+    conn = _connect(db_path)
+    try:
+        sql, args = "UPDATE open_incidents SET state = 'resolved', resolved_at = ? WHERE state = 'open'", [_now().isoformat()]
+        if workload_name:
+            sql, args = sql + " AND workload = ?", args + [workload_name]
+        n = conn.execute(sql, args).rowcount
+        conn.commit()
+        return n
     finally:
         conn.close()
 

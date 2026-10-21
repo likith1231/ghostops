@@ -124,3 +124,26 @@ def test_pipeline_links_existing_pr_instead_of_opening_another():
         result = crew.run_pipeline(ctx)
     create.assert_not_called()
     assert result["pr_result"] == {"pr_created": False, "reason": "duplicate_of_open_pr", "pr_url": "https://github.com/a/b/pull/4"}
+
+
+def test_incident_whose_resolved_message_was_lost_expires(db):
+    first = correlation.classify_alert(mem(), db_path=db)["incident"]
+    later = datetime.now(timezone.utc) + timedelta(seconds=correlation.STALE_AFTER_S + 5)
+    with patch.object(correlation, "_now", return_value=later):
+        v = correlation.classify_alert(mem(), db_path=db)
+    assert v["action"] == "new" and v["incident"]["id"] != first["id"]
+
+
+def test_recent_repeat_is_still_a_duplicate(db):
+    correlation.classify_alert(mem(), db_path=db)
+    later = datetime.now(timezone.utc) + timedelta(seconds=correlation.STALE_AFTER_S - 60)
+    with patch.object(correlation, "_now", return_value=later):
+        assert correlation.classify_alert(mem(), db_path=db)["action"] == "duplicate"
+
+
+def test_close_open_for_one_workload_or_all(db):
+    correlation.classify_alert(mem(), db_path=db)
+    correlation.classify_alert(mem("billing-5d8f7c6b4d-zzzzz"), db_path=db)
+    assert correlation.close_open(workload_name="sample-app", db_path=db) == 1
+    assert correlation.classify_alert(mem(), db_path=db)["action"] == "new"
+    assert correlation.close_open(db_path=db) == 2

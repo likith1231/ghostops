@@ -190,6 +190,8 @@ cmd_leak() {
     for _ in $(seq 1 36); do [ "$(alert_state)" = inactive ] && break; sleep 5; done
     ok "sample app restarted, old alert cleared"
   fi
+  # An incident left open (its "resolved" message lost) would swallow the new alert as a duplicate.
+  "$PY" -c "from agents import correlation; n = correlation.close_open(workload_name='sample-app'); n and print(f'  closed {n} stale incident(s)')"
 
   local before started
   before=$(incident_total); before=${before:-0}
