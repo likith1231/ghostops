@@ -23,7 +23,7 @@ const AiCore = dynamic(() => import("@/components/three/AiCore"), { ssr: false }
 
 const HERO_FACTS = [
   ["17", "catalogued failure types"],
-  ["3", "fixed end-to-end"],
+  ["4", "fixed end-to-end"],
   ["6", "automated safety gates"],
   ["0", "unreviewed production merges"],
 ];
