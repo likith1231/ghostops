@@ -1,0 +1,63 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T13:51:07.373128+00:00",
+    "environment": {
+      "ghostops_commit": "8cb12225006d5022af3caade57be6256c5562e45",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:c3a16af6af470b83a4fab61845b2385dddeafda3af6db8be78ee84d343f6bae7",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 1,
+          "files": 1,
+          "removed": 1
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": null,
+        "verdict": "not_applicable"
+      },
+      "fix_canary": null,
+      "opa_policy": "passed",
+      "regression_test": {
+        "failed_before": true,
+        "passed_after": true,
+        "path": "sample-app/test_ghostops_regression_math.py",
+        "test_sha256": "f1207cb10a8870d1e1ef13f48eea32493aee356cc45169d1a5c7ef482708a014"
+      },
+      "sandbox": {
+        "output_sha256": "ecde8dc085d7f5e74f91433d9c2274c30ef7e5170f9db3e61b317525e503242d",
+        "passed": true,
+        "summary": "The patch was applied in an isolated Docker container and pytest was run. Exit code was 0. Two tests were collected (test_math_utils.py::test_add and test_math_utils.py::test_multiply) and both passed with no failures, errors, skips, or warnings. Verdict: PASS. Caveat: the suite is small (2 tests), so this confirms no regressions in the covered behavior (add and multiply) but says nothing about untested code paths."
+      }
+    },
+    "incident": {
+      "alert_type": "ci_failure",
+      "confidence": "0.97",
+      "root_cause": "ci_test_failure",
+      "run_ref": null
+    },
+    "patch": {
+      "diff_sha256": "cb3540ddd0db8e98b98b2b899dcfb2cbe63c291d55cea816c60e3a35b094f5f7",
+      "explanation": "multiply() in sample-app/math_utils.py was a copy-paste of add() and used the + operator, so multiply(2, 4) returned 6 instead of 8 and test_multiply failed. Changing the operator to * makes multiply return the correct product, which satisfies both assertions in test_multiply (2*4 == 8, 3*3 == 9). The test and the add() function are untouched, so this is the only change needed.",
+      "file": "sample-app/math_utils.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 16
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "none"
+    }
+  },
+  "key_fingerprint": "90a939c9b3d81548",
+  "signature": "AJ+3n1VXSD/2Zhr14KTiOFuq8gyuLarL9fTF5mmReuPqzFC//UBVKtyN7S0TBl0hQ376Xppm48JcQJX7GjLgDg=="
+}
