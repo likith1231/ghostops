@@ -1,0 +1,63 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T13:13:18.770751+00:00",
+    "environment": {
+      "ghostops_commit": "7338be8c310ed067fcff80b26a6c7e037aba8496",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:c3a16af6af470b83a4fab61845b2385dddeafda3af6db8be78ee84d343f6bae7",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 2,
+          "files": 1,
+          "removed": 0
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": null,
+        "verdict": "not_applicable"
+      },
+      "fix_canary": null,
+      "opa_policy": "passed",
+      "regression_test": {
+        "failed_before": true,
+        "passed_after": true,
+        "path": "sample-app/test_ghostops_regression_null.py",
+        "test_sha256": "f18fabdc97517e41fdef089181eb88591d4125abd8df10821771be28469a080b"
+      },
+      "sandbox": {
+        "output_sha256": "b4436814de436bcf70992383a6273b74f965c9127a909127e69c5b3411fca39c",
+        "passed": true,
+        "summary": "PASS. The patch was applied in an isolated Docker container and pytest exited with code 0. All 3 collected tests passed (test_display_name, test_display_name_empty_payload, test_display_name_missing_name) in 0.01s, with no failures, errors, skips, or warnings. The run used Python 3.11.15, pytest 9.1.1, and pluggy 1.6.0 on Linux, with rootdir /workspace/sample-app. The edge cases (empty payload, missing name) are covered and pass. Caveat: the suite is small (3 tests), so this verdict covers only the behaviour those tests exercise. It is a definitive pass for the supplied test suite, and the patch is cleared to proceed from a test-validation standpoint."
+      }
+    },
+    "incident": {
+      "alert_type": "app_exception",
+      "confidence": "0.97",
+      "root_cause": "null_reference",
+      "run_ref": null
+    },
+    "patch": {
+      "diff_sha256": "e09fb0badf6fe312d012c9c2ada48efb81dc8e885b06161a712dfa5b8e04cece",
+      "explanation": "display_name() subscripted `profile[\"name\"]` without checking for an empty payload, so a None profile raised TypeError (and a missing key would raise KeyError), producing the HTTP 500. The fix adds a single guard at the top of the function that returns \"anonymous\" when the profile is None/empty or has no truthy 'name' value, matching the documented contract and satisfying test_display_name_empty_payload and test_display_name_missing_name. The normal path (`profile[\"name\"].strip()`) is unchanged,",
+      "file": "sample-app/user_service.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 6
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "none"
+    }
+  },
+  "key_fingerprint": "90a939c9b3d81548",
+  "signature": "+14e6TlearOW2pWyCFJYcw3dR8pPNluQSRvA9cdXbZyT54Xzm/6vzobONjK2E+6ZO9oFyUBR91oARTKhpiZPBg=="
+}

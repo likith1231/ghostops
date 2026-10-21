@@ -5,7 +5,7 @@ Diagnostic Reasoner Agent
 Consumes a structured *failure context* JSON and classifies the root cause
 into one of:
 
-    ``memory_leak`` | ``ci_test_failure`` | ``unknown``
+    ``memory_leak`` | ``ci_test_failure`` | ``null_reference`` | ``unknown``
 
 It also produces a short structured diagnosis that cites the specific log
 lines and metric values that led to the conclusion.
@@ -65,7 +65,7 @@ def build_reasoner_agent() -> Agent:
         role="Diagnostic Reasoner",
         goal=(
             "Analyse the failure context and classify the root cause as "
-            "memory_leak, ci_test_failure, or unknown with supporting evidence."
+            "memory_leak, ci_test_failure, null_reference, or unknown with supporting evidence."
         ),
         backstory=(
             "You are a senior SRE who has triaged thousands of production "
