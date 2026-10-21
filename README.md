@@ -115,6 +115,9 @@ graph LR
 | Real backend | `127.0.0.1:8000` on the VM | Real Claude pipeline, opens real PRs. Port 8000 is closed to the internet; reach it with `ssh -L 8000:127.0.0.1:8000 ubuntu@<ip>` |
 | Grafana | `https://grafana.<ip>.sslip.io` | Viewer access for visitors |
 
+The same VM also runs [Orbit IDE](https://github.com/likith1231/Orbit-IDE) (its own Caddy site file in `/etc/caddy-sites/`, Docker for its terminals);
+`bootstrap.sh` gives Docker public DNS because Orbit blocks the Oracle metadata address (the default container resolver) for user containers.
+
 Caddy refuses `/metrics` and `/webhook/*`, and every non-GET request except `/api/simulate` and `/api/detect`,
 so the kill switch, `/api/live/*` and feedback sync are not reachable from the internet. HTTPS certificates are
 issued automatically for `<ip>.sslip.io` names, so no domain is needed.
