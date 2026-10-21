@@ -54,8 +54,23 @@ def _sh(*cmd: str, cwd: Path | None = None, timeout: int = 300) -> str:
     return out.stdout
 
 
+def load_image(image: str) -> None:
+    """Make a local image available to the cluster's node: kind on a laptop, k3s on the Oracle VM."""
+    if shutil.which("kind"):
+        _sh("kind", "load", "docker-image", image, "--name", KIND_CLUSTER)
+    elif shutil.which("k3s"):
+        saved = subprocess.run(["docker", "save", image], capture_output=True, timeout=300)
+        if saved.returncode != 0:
+            raise RuntimeError(f"docker save failed: {saved.stderr.decode()[:300]}")
+        imported = subprocess.run(["sudo", "-n", "k3s", "ctr", "images", "import", "-"], input=saved.stdout, capture_output=True, timeout=300)
+        if imported.returncode != 0:
+            raise RuntimeError(f"k3s image import failed: {imported.stderr.decode()[:300]}")
+    else:
+        raise RuntimeError("neither kind nor k3s is installed, so the canary image cannot be loaded into a cluster")
+
+
 def build_image(file_path: str, diff: str, tag: str) -> str:
-    """Build the patched sample app and load it into kind; returns the image name."""
+    """Build the patched sample app and load it into the cluster; returns the image name."""
     image = f"ghostops-sample-app:{tag}"
     with tempfile.TemporaryDirectory() as td:
         app_dir = Path(td) / "sample-app"
@@ -64,7 +79,7 @@ def build_image(file_path: str, diff: str, tag: str) -> str:
         if error is not None:
             raise RuntimeError(f"patch did not apply to the image source: {error[:200]}")
         _sh("docker", "build", "-q", "-t", image, str(app_dir))
-    _sh("kind", "load", "docker-image", image, "--name", KIND_CLUSTER)
+    load_image(image)
     return image
 
 

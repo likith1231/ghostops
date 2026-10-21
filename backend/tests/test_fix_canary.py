@@ -138,3 +138,23 @@ def test_passing_canary_lowers_risk():
     result = _pipeline({"verdict": "passed", "summary": "ok"})
     assert any(f["factor"] == "canary" for f in result["risk"]["factors"])
     assert result["patch"]["evidence"]["bundle"]["gates"]["fix_canary"]["verdict"] == "passed"
+
+
+def test_load_image_uses_kind_when_present_else_k3s_else_fails():
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 0, "stdout": b"tar", "stderr": b""})()
+
+    with patch.object(fc.shutil, "which", side_effect=lambda n: "/bin/" + n if n == "kind" else None), patch.object(fc, "_sh") as sh:
+        fc.load_image("img:1")
+    assert sh.call_args.args[:3] == ("kind", "load", "docker-image")
+
+    with patch.object(fc.shutil, "which", side_effect=lambda n: "/bin/k3s" if n == "k3s" else None), patch.object(fc.subprocess, "run", side_effect=run):
+        fc.load_image("img:1")
+    assert calls[0][:2] == ["docker", "save"] and calls[1][:4] == ["sudo", "-n", "k3s", "ctr"]
+
+    with patch.object(fc.shutil, "which", return_value=None):
+        with pytest.raises(RuntimeError, match="neither kind nor k3s"):
+            fc.load_image("img:1")
