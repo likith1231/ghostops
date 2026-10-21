@@ -34,6 +34,18 @@ if ! command -v docker >/dev/null; then
 fi
 sudo usermod -aG docker "$(id -un)"
 
+# Containers default to Oracle's resolver (169.254.169.254), which is the cloud metadata address.
+# Orbit IDE (and any hardening) blocks that address for containers, which would leave builds and
+# user containers without DNS. Give Docker public resolvers instead, unless the host already configured some.
+if ! sudo grep -qs '"dns"' /etc/docker/daemon.json; then
+  if [ -s /etc/docker/daemon.json ]; then
+    echo "   /etc/docker/daemon.json exists without a dns setting; add \"dns\": [\"1.1.1.1\", \"8.8.8.8\"] to it yourself"
+  else
+    echo '{"dns": ["1.1.1.1", "8.8.8.8"]}' | sudo tee /etc/docker/daemon.json >/dev/null
+    sudo systemctl restart docker
+  fi
+fi
+
 if ! command -v caddy >/dev/null; then
   say "Installing Caddy"
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
