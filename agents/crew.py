@@ -28,6 +28,7 @@ from typing import Any
 from crewai import Crew, Process
 
 from agents import blast_radius, correlation, evidence, feedback, fix_library, governance, mock_llm, postmortem, regression, replay, risk, shield
+from agents.diffutil import recount_hunks
 from agents.config import MOCK_LLM
 from agents.diagnostic_reasoner import build_reasoner_agent, build_reasoner_task
 from agents.patch_generator import build_patch_agent, build_patch_task
@@ -185,7 +186,9 @@ def run_pipeline(failure_context: dict, on_stage: StageCallback | None = None, f
     named = patch.get("file_path")
     file_path = named if named in source_files else next(iter(source_files), "app.py")
     original_content = source_files.get(file_path, "")
-    diff_text = patch.get("diff", "")
+    diff_text = recount_hunks(patch.get("diff", ""))
+    if diff_text:
+        patch["diff"] = diff_text  # the PR gets the repaired diff too
     # The other files (e.g. the tests) go into the sandbox alongside the patched one.
     extra_files = {k: v for k, v in source_files.items() if k != file_path}
 
