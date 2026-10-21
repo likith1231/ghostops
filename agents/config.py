@@ -90,7 +90,7 @@ if not GITHUB_TOKEN:
 # Swap these values to change models across the entire pipeline.
 # ---------------------------------------------------------------------------
 # Claude is used whenever ANTHROPIC_API_KEY is set; Gemini is the fallback.
-CLAUDE_MODEL: str = get_secret("CLAUDE_MODEL", "claude-opus-5-5")
+CLAUDE_MODEL: str = get_secret("CLAUDE_MODEL", "claude-sonnet-5-5")
 
 if ANTHROPIC_API_KEY:
     PRIMARY_MODEL: str = f"anthropic/{CLAUDE_MODEL}"         # anthropic/ prefix required by litellm

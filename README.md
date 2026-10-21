@@ -47,7 +47,7 @@ graph TD
 *   **Security & Policy:** HashiCorp Vault (Secrets), OPA / Gatekeeper (Policy Enforcement)
 *   **Chaos Engineering:** Chaos Mesh
 *   **Backend & Orchestration:** Python, FastAPI, CrewAI
-*   **LLM Provider:** Claude API (`anthropic/claude-sonnet-4-6` via LiteLLM)
+*   **LLM Provider:** Claude API (`anthropic/claude-sonnet-5-5` via LiteLLM)
 *   **Continuous Deployment:** ArgoCD
 *   **Web Dashboard:** Next.js, React Three Fiber, Tailwind CSS
 
