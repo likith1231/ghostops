@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# Deploys GhostOps to a single Oracle Cloud VM: k3s with the monitoring stack (Prometheus,
-# Alertmanager, Grafana, Jaeger) and the sample app, the FastAPI + CrewAI backend as a systemd
-# service, and HTTPS for Grafana and the read-only API through the VM's Caddy.
+# Deploys GhostOps to a single Oracle Cloud VM:
+#   * k3s with the monitoring stack (Prometheus, Alertmanager, Grafana, Jaeger) and the sample app;
+#   * the real backend (Claude agents) on port 8000, fed by Alertmanager and never public;
+#   * a PUBLIC copy of the backend in mock mode (no Claude key, no GitHub token, no PRs) on 127.0.0.1:8001;
+#   * the website on 127.0.0.1:3100;
+#   * HTTPS for all of it through Caddy: ghostops.<ip>.sslip.io (site), api-ghostops.<ip>.sslip.io
+#     (public mock API: GET plus /api/simulate and /api/detect only), grafana.<ip>.sslip.io.
 #
 # Usage (on the VM, from the repo root):
+#   bash deploy/oracle/bootstrap.sh          # once: firewall, Docker, Caddy, Node
 #   cp deploy/oracle/env.example .env && nano .env
 #   bash deploy/oracle/setup.sh
 # Re-run it any time to apply the latest code.
@@ -17,7 +22,7 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 [ -f .env ] || die "Missing .env. Run: cp deploy/oracle/env.example .env && nano .env"
 set -a; . ./.env; set +a
 [ -n "${ANTHROPIC_API_KEY:-}" ] || die "Set ANTHROPIC_API_KEY in .env"
-command -v docker >/dev/null || die "Docker is not installed. Run the Orbit IDE setup first (deploy/setup-oracle.sh)."
+command -v docker >/dev/null || die "Docker is not installed (or log in again for the docker group). Run: bash deploy/oracle/bootstrap.sh"
 
 # ---------------------------------------------------------------- k3s (shared by all projects)
 ensure_k3s() {
@@ -63,7 +68,8 @@ base_domain() {
   echo "${ip//./-}.sslip.io"
 }
 
-# Adds a site to the VM's Caddy (run by the Orbit IDE stack) and reloads it.
+# Adds a site to the VM's Caddy and reloads it. Caddy is the system service installed by
+# bootstrap.sh, or a container (the Orbit IDE stack); both read /etc/caddy-sites/*.caddy.
 caddy_site() {
   local name=$1 body=$2
   sudo mkdir -p /etc/caddy-sites
@@ -73,8 +79,10 @@ caddy_site() {
   if [ -n "$caddy" ]; then
     docker exec "$caddy" caddy reload --config /etc/caddy/Caddyfile >/dev/null \
       || echo "   (Caddy reload failed; check: docker logs $caddy)"
+  elif systemctl is-active --quiet caddy; then
+    sudo systemctl reload caddy || echo "   (Caddy reload failed; check: journalctl -u caddy -n 30)"
   else
-    echo "   Caddy is not running yet. Start the Orbit IDE stack and this site will be served."
+    echo "   Caddy is not running. Run bash deploy/oracle/bootstrap.sh, then this script again."
   fi
 }
 
@@ -158,32 +166,104 @@ sudo systemctl restart ghostops-backend
 for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1 && break; sleep 2; done
 curl -fsS http://127.0.0.1:8000/health >/dev/null || die "Backend did not start. Check: journalctl -u ghostops-backend -n 80"
 
-say "Publishing Grafana and the read-only API over HTTPS"
+say "Starting the public mock-mode API (no secrets) and the website"
+# The public API must never hold your keys: the variables below are set empty, and the app only fills
+# a variable from .env when it is not already set. Mock mode makes no Claude call and opens no PR.
+PUBLIC_DB_DIR=/var/lib/ghostops-public
+sudo mkdir -p "$PUBLIC_DB_DIR" && sudo chown "$(id -un)" "$PUBLIC_DB_DIR"
+sudo tee /etc/systemd/system/ghostops-public-api.service >/dev/null <<EOF
+[Unit]
+Description=GhostOps public API (mock mode: no Claude key, no GitHub token, no PRs)
+After=network-online.target docker.service
+
+[Service]
+User=$(id -un)
+WorkingDirectory=$REPO_DIR
+Environment=GHOSTOPS_MOCK_LLM=1
+Environment=GHOSTOPS_DB_PATH=$PUBLIC_DB_DIR/incidents.db
+Environment=GHOSTOPS_CORS_ORIGINS=https://ghostops.$DOMAIN_BASE
+Environment=ANTHROPIC_API_KEY=
+Environment=GOOGLE_API_KEY=
+Environment=GITHUB_TOKEN=
+Environment=OTEL_SDK_DISABLED=true
+ExecStart=$REPO_DIR/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8001
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+command -v node >/dev/null || die "Node is not installed. Run: bash deploy/oracle/bootstrap.sh"
+(cd web && npm ci --no-audit --no-fund --silent \
+  && NEXT_PUBLIC_GHOSTOPS_API="https://api-ghostops.$DOMAIN_BASE" npm run build >/dev/null)
+sudo tee /etc/systemd/system/ghostops-web.service >/dev/null <<EOF
+[Unit]
+Description=GhostOps website
+After=network-online.target
+
+[Service]
+User=$(id -un)
+WorkingDirectory=$REPO_DIR/web
+Environment=NODE_ENV=production
+ExecStart=$REPO_DIR/web/node_modules/.bin/next start -p 3100 -H 127.0.0.1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable ghostops-public-api ghostops-web >/dev/null
+sudo systemctl restart ghostops-public-api ghostops-web
+for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:8001/health >/dev/null 2>&1 && break; sleep 2; done
+curl -fsS http://127.0.0.1:8001/health >/dev/null || die "Public API did not start. Check: journalctl -u ghostops-public-api -n 80"
+for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:3100 2>/dev/null && break; sleep 2; done
+curl -fsS -o /dev/null http://127.0.0.1:3100 || die "Website did not start. Check: journalctl -u ghostops-web -n 80"
+
+say "Publishing the website, the public API and Grafana over HTTPS"
 caddy_site ghostops "grafana.$DOMAIN_BASE {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:30030
 }
 
 ghostops.$DOMAIN_BASE {
-	# Only the read-only API is public; alerts reach the backend from inside the VM.
-	@internal path /webhook/* /metrics
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3100
+}
+
+api-ghostops.$DOMAIN_BASE {
+	# Public and read-mostly: anything that changes state is refused, except starting a mock-mode
+	# simulation and running the detectors (no Claude calls, no PRs). Alerts and metrics stay internal.
+	@internal path /metrics /webhook/*
 	respond @internal 404
-	reverse_proxy 127.0.0.1:8000
+	@unsafe {
+		not method GET HEAD OPTIONS
+		not path /api/simulate /api/detect
+	}
+	respond @unsafe 403
+	reverse_proxy 127.0.0.1:8001
 }"
 
 cat <<EOF
 
 GhostOps is running:
-  Grafana dashboards: https://grafana.$DOMAIN_BASE   (admin / $GRAFANA_PASSWORD)
-  Incident API:       https://ghostops.$DOMAIN_BASE/docs
-  (the first visit can take ~20 s while the HTTPS certificate is issued)
+  Website (share this): https://ghostops.$DOMAIN_BASE
+  Public mock API:      https://api-ghostops.$DOMAIN_BASE/docs
+  Grafana dashboards:   https://grafana.$DOMAIN_BASE   (admin / $GRAFANA_PASSWORD)
+  (the first visit can take ~20 s while the HTTPS certificates are issued)
+
+The real, Claude-powered backend listens on port 8000, which is closed to the internet. To use it
+from your laptop: ssh -L 8000:127.0.0.1:8000 -i ~/.ssh/ghostops_oracle ubuntu@<this VM>
 
 Trigger a demo incident (memory leak in the sample app):
   kubectl port-forward deploy/sample-app 5000:5000 &
   for i in \$(seq 1 10); do curl -s localhost:5000/leak >/dev/null; done
 
 Useful commands:
-  journalctl -u ghostops-backend -f       # watch the agents work
+  journalctl -u ghostops-backend -f       # watch the real agents work
+  journalctl -u ghostops-public-api -f    # the public mock API
+  systemctl status ghostops-web
   kubectl -n monitoring get pods          # monitoring stack
   bash deploy/oracle/setup.sh             # redeploy after a git pull
 EOF
