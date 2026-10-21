@@ -1,0 +1,68 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T13:58:09.371032+00:00",
+    "environment": {
+      "ghostops_commit": "8cb12225006d5022af3caade57be6256c5562e45",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:c3a16af6af470b83a4fab61845b2385dddeafda3af6db8be78ee84d343f6bae7",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 0,
+          "files": 1,
+          "removed": 2
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": null,
+        "verdict": "not_applicable"
+      },
+      "fix_canary": {
+        "error_rate": 0.0,
+        "image": "ghostops-sample-app:fix-590979",
+        "memory_growth_kib_per_request": 1.3,
+        "verdict": "passed"
+      },
+      "opa_policy": "passed",
+      "regression_test": {
+        "failed_before": true,
+        "passed_after": true,
+        "path": "sample-app/test_ghostops_regression_memory.py",
+        "test_sha256": "be0f8cc3519d94b0acd7def47db7d61a48d75e0a857aa19cd829e4d7b7f2598f"
+      },
+      "sandbox": {
+        "output_sha256": "0788bea1c3360eda427cce3ed7de07cd15e51973deb1e24c85b3d3ad4feee25e",
+        "passed": true,
+        "summary": "PASS. The patch was applied in an isolated Docker container and pytest exited with code 0. All 7 collected tests passed (0 failed, 0 errors, 0 skipped) in 0.09s on Python 3.11.15 with pytest 9.1.1. Passing tests: test_index, test_health, test_metrics_endpoint, test_leak_endpoint_responds, test_leak_does_not_retain_memory, test_checkout_healthy_by_default, test_requests_counted_by_status_and_release. The memory-leak regression test (test_leak_does_not_retain_memory), the metrics endpoint test, and the per-status/per-release request counting test all pass. Caveat: this verdict covers only the 7 tests in test_app.py. The 0.09s runtime means the leak test is a lightweight check, not a long-running soak test, so it does not rule out slow resource issues under production load. The suite itself shows no failures, so the patch is cleared on the test evidence provided."
+      }
+    },
+    "incident": {
+      "alert_type": "memory_high",
+      "confidence": "0.96",
+      "root_cause": "memory_leak",
+      "run_ref": "c26eb17917fa"
+    },
+    "patch": {
+      "diff_sha256": "1fc1536074be40049f5b01c77501e34c213efd6d49ce92e5979e943f5a31d1cc",
+      "explanation": "The /leak handler in sample-app/app.py appended a 10 MiB string to the module-level `leak_store` list on every call, and nothing ever evicted entries, so working-set memory grew without bound until it neared the 128 MiB container limit. The fix removes that `leak_store.append(...)` line and its comment, so the endpoint still returns HTTP 200 and `test_leak_endpoint_responds` keeps passing. Memory no longer grows with request count, so `test_leak_does_not_retain_memory` should pass because `leak_",
+      "file": "sample-app/app.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 0
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "none"
+    }
+  },
+  "key_fingerprint": "90a939c9b3d81548",
+  "signature": "bZPhcsGMoa+qvzD8RUbvG251K9xbxCf4MYhFZFjIE0gto2FYTewATI5fWsDIxihpOQple3WUHtvWNtsbB6LoCw=="
+}
