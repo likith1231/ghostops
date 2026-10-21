@@ -359,4 +359,4 @@ def test_catalogue_detector_names_match_use_case():
 
 
 def test_end_to_end_use_cases():
-    assert {u["id"] for u in USE_CASES if u["end_to_end"]} == {"A1", "B1", "C4"}
+    assert {u["id"] for u in USE_CASES if u["end_to_end"]} == {"A1", "B1", "C1", "C4"}
