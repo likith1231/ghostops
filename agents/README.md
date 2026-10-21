@@ -13,13 +13,13 @@ failure_context (JSON)
         │
         ▼
 ┌──────────────────────┐
-│  Diagnostic Reasoner │  ← Claude 3.5 Sonnet
+│  Diagnostic Reasoner │  ← Claude Sonnet 5.5
 │  (classify root cause)│
 └──────────┬───────────┘
            │ diagnosis JSON
            ▼
 ┌──────────────────────┐
-│   Patch Generator    │  ← Claude 3.5 Sonnet
+│   Patch Generator    │  ← Claude Sonnet 5.5
 │  (unified diff)      │
 └──────────┬───────────┘
            │ diff + explanation
