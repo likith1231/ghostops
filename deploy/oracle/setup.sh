@@ -26,6 +26,15 @@ command -v docker >/dev/null || die "Docker is not installed (or log in again fo
 
 # ---------------------------------------------------------------- k3s (shared by all projects)
 ensure_k3s() {
+  # Pods resolve names through CoreDNS, which inherits the node's resolver: Oracle's VCN DNS at 169.254.169.254.
+  # Docker's DOCKER-USER firewall chain sees all forwarded traffic, so Orbit IDE's rule blocking that
+  # metadata address also blocks pod DNS (ArgoCD then cannot reach GitHub). Give k3s public resolvers.
+  if ! sudo grep -qs "^resolv-conf:" /etc/rancher/k3s/config.yaml; then
+    sudo mkdir -p /etc/rancher/k3s
+    printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' | sudo tee /etc/rancher/k3s/resolv.conf >/dev/null
+    echo "resolv-conf: /etc/rancher/k3s/resolv.conf" | sudo tee -a /etc/rancher/k3s/config.yaml >/dev/null
+    command -v k3s >/dev/null && sudo systemctl restart k3s
+  fi
   if ! command -v k3s >/dev/null; then
     say "Installing k3s (lightweight Kubernetes)"
     # Traefik is disabled: Caddy already owns ports 80/443 on this VM.
