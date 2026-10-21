@@ -2,6 +2,8 @@
 
 GhostOps is an autonomous AIOps platform that acts as an AI-driven Site Reliability Engineer (SRE). Instead of just alerting humans when something breaks, GhostOps detects real incidents, diagnoses the root cause, writes a code fix, validates the patch in a secure sandbox, and opens a GitHub Pull Request—all autonomously.
 
+**Live demo:** https://ghostops.140-245-208-207.sslip.io (public, mock-mode AI, safe to click) · Grafana: https://grafana.140-245-208-207.sslip.io
+
 ## 🚀 Project Overview
 
 When an incident occurs (e.g., a memory leak or a CI test failure), GhostOps springs into action:
@@ -81,6 +83,44 @@ To run GhostOps locally, you'll need Docker, `kind`, `kubectl`, `helm`, and `pyt
    uvicorn backend.main:app --host 0.0.0.0 --port 8000
    ```
    *(Ensure port-forwards for Jaeger (4317), Prometheus (9090), and Grafana (3000) are active if viewing telemetry).*
+
+---
+
+## ☁️ Cloud Deployment (Oracle Cloud)
+
+GhostOps runs on one Oracle Cloud Arm VM (Ubuntu 24.04, 4 OCPU, 24 GB; inside the Always Free allowance).
+Everything is set up by two scripts in `deploy/oracle/`:
+
+```bash
+bash deploy/oracle/bootstrap.sh          # once: opens 80/443 in the VM firewall, installs Docker, Caddy, Node 22
+cp deploy/oracle/env.example .env && nano .env   # ANTHROPIC_API_KEY, GITHUB_TOKEN, ...
+bash deploy/oracle/setup.sh              # k3s + monitoring + sample app + both backends + website + HTTPS
+```
+
+Also open ports 80 and 443 in the VM's Oracle network security list. `setup.sh` is safe to re-run after a `git pull`.
+
+```mermaid
+graph LR
+    V((Visitor)) -->|HTTPS| C[Caddy]
+    C --> W[Website :3100]
+    C -->|"GET + /api/simulate + /api/detect only"| P["Public API :8001<br/>mock mode, no secrets"]
+    C --> G[Grafana]
+    K[k3s: Prometheus, Alertmanager, sample app] -->|webhook| R["Real backend :8000<br/>Claude + GitHub token<br/>not reachable from the internet"]
+```
+
+| What | Where | Notes |
+|---|---|---|
+| Website | `https://ghostops.<ip>.sslip.io` | Next.js, `next start` as a systemd service |
+| Public API | `https://api-ghostops.<ip>.sslip.io` | **Mock mode**: no Claude call, no PR; `ANTHROPIC_API_KEY` and `GITHUB_TOKEN` are forced empty; its own database |
+| Real backend | `127.0.0.1:8000` on the VM | Real Claude pipeline, opens real PRs. Port 8000 is closed to the internet; reach it with `ssh -L 8000:127.0.0.1:8000 ubuntu@<ip>` |
+| Grafana | `https://grafana.<ip>.sslip.io` | Viewer access for visitors |
+
+The same VM also runs [Orbit IDE](https://github.com/likith1231/Orbit-IDE) (its own Caddy site file in `/etc/caddy-sites/`, Docker for its terminals);
+`bootstrap.sh` gives Docker public DNS because Orbit blocks the Oracle metadata address (the default container resolver) for user containers.
+
+Caddy refuses `/metrics` and `/webhook/*`, and every non-GET request except `/api/simulate` and `/api/detect`,
+so the kill switch, `/api/live/*` and feedback sync are not reachable from the internet. HTTPS certificates are
+issued automatically for `<ip>.sslip.io` names, so no domain is needed.
 
 ---
 
@@ -183,7 +223,7 @@ The model is Claude Sonnet 5.5 by default; set `CLAUDE_MODEL` in `.env` to use a
 
 | Suite | What | Count |
 |---|---|---|
-| `pytest` | agents, detectors, backend, live mode, C1, feedback loop, PR flow against a real git repo, end-to-end runs through the real Docker sandbox | 521 |
+| `pytest` | agents, detectors, backend, live mode, C1, feedback loop, PR flow against a real git repo, end-to-end runs through the real Docker sandbox | 530 |
 | Rego (`conftest verify`) | the OPA allowlist, including path traversal | 10 |
 | Vitest | website logic: diff view, pipeline states, replay, charts, API client, activity feed | 26 |
 | e2e (`web/e2e/smoke.mjs`) | Chrome against the built site and a real backend: a C4 run validated by the sandbox, palette, detector lab, replay | 1 flow |
@@ -210,7 +250,7 @@ GhostOps is designed to respond to real failures. You can trigger incidents in t
 
 ## 🏆 Real Example Resolutions
 
-GhostOps has been proven to resolve complex issues end-to-end. Here are two real examples of the AI pipeline diagnosing a problem and submitting a correct, validated fix:
+GhostOps has been proven to resolve complex issues end-to-end, locally and on the Oracle VM (Claude Sonnet 5.5). Here are two early examples of the AI pipeline diagnosing a problem and submitting a correct, validated fix (the PRs are closed on purpose, because merging one removes the bug the demo needs):
 
 *   **Example 1 (Memory Leak):** 
     Detected a growing cache issue in `app.py`. The pipeline identified the unbounded growth, generated a fix to implement an LRU cache or max-size limit, validated it, and opened a PR. 
@@ -225,8 +265,8 @@ GhostOps has been proven to resolve complex issues end-to-end. Here are two real
 ## ⚠️ Known Limitations
 
 GhostOps is currently a localized Proof of Concept and is **not yet production-hardened**:
-*   **Local-Only Backend:** The backend and cluster run on a local `kind` cluster (or the Oracle VM via `deploy/oracle/setup.sh`); the website on Vercel is frontend-only.
-*   **Open Live API:** In live mode the backend listens on all interfaces and `/api/simulate` and `/api/live/*` have no authentication: keep it on a trusted network.
+*   **Single machine:** The cluster, both backends and the website share one VM (or your laptop's `kind` cluster). There is no high availability.
+*   **No API authentication:** `/api/simulate` and `/api/live/*` have no login. On the Oracle VM the real backend is not exposed and the public API is mock-mode and restricted by Caddy; when you run it yourself, keep it on a trusted network.
 *   **Vault in Dev Mode:** HashiCorp Vault is running in `-dev` mode with HTTP. In production, TLS and proper auto-unseal must be configured.
 *   **Manual OPA Updates:** The OPA Gatekeeper allowlist (`allowlist.rego`) strictly dictates which files the AI is permitted to patch. Currently, new authorized files (like `app.py` or `math_utils.py`) must be manually added to the policy.
 *   **API Rate Limits:** The multi-agent pipeline is token-heavy and reliant on the Claude API limits. Extensive debugging sessions may trigger rate-limiting errors (`429 Resource Exhausted`). Mock mode (`GHOSTOPS_MOCK_LLM=1`) runs everything else without a key.
