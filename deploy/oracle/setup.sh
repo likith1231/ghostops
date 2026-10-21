@@ -181,7 +181,7 @@ User=$(id -un)
 WorkingDirectory=$REPO_DIR
 Environment=GHOSTOPS_MOCK_LLM=1
 Environment=GHOSTOPS_DB_PATH=$PUBLIC_DB_DIR/incidents.db
-Environment=GHOSTOPS_CORS_ORIGINS=https://ghostops.$DOMAIN_BASE
+Environment=GHOSTOPS_CORS_ORIGINS=https://ghostops.$DOMAIN_BASE${EXTRA_CORS_ORIGINS:+,$EXTRA_CORS_ORIGINS}
 Environment=ANTHROPIC_API_KEY=
 Environment=GOOGLE_API_KEY=
 Environment=GITHUB_TOKEN=
