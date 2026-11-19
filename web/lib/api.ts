@@ -270,8 +270,37 @@ export interface Detection {
   suggested_action: string;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+/**
+ * Real incidents (the LIVE buttons) run on the real backend. On the public site that is a separate,
+ * access-key protected host; locally it is the same backend as everything else.
+ */
+export const LIVE_BASE =
+  process.env.NEXT_PUBLIC_GHOSTOPS_LIVE_API ?? (API_BASE.includes("//api-") ? API_BASE.replace("//api-", "//live-") : API_BASE);
+export const LIVE_NEEDS_KEY = LIVE_BASE !== API_BASE;
+const KEY_STORAGE = "ghostops.liveKey";
+
+export function getLiveKey(): string {
+  try {
+    return localStorage.getItem(KEY_STORAGE) ?? "";
+  } catch {
+    return "";
+  }
+}
+export function setLiveKey(key: string): void {
+  try {
+    localStorage.setItem(KEY_STORAGE, key.trim());
+  } catch {
+    /* storage unavailable: the key lasts until the page reloads */
+  }
+}
+function liveUrl(path: string): string {
+  const key = getLiveKey();
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${LIVE_NEEDS_KEY && key ? `${sep}key=${encodeURIComponent(key)}` : ""}`;
+}
+
+async function request<T>(path: string, init?: RequestInit, base: string = API_BASE): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
     cache: "no-store",
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -297,7 +326,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ scenario }),
     }),
-  run: (id: string) => request<Run>(`/api/runs/${id}`),
+  run: (id: string, live = false) =>
+    live ? request<Run>(liveUrl(`/api/runs/${id}`), undefined, LIVE_BASE) : request<Run>(`/api/runs/${id}`),
   summary: () => request<Summary>("/api/incidents/summary"),
   timeseries: () => request<DayCount[]>("/api/incidents/timeseries"),
   feedback: () => request<Feedback>("/api/incidents/feedback"),
@@ -306,9 +336,9 @@ export const api = {
   incident: (id: number) => request<Incident>(`/api/incidents/${id}`),
   usecases: () => request<UseCase[]>("/api/usecases"),
   activity: () => request<Activity>("/api/activity"),
-  liveStatus: () => request<LiveStatus>("/api/live/status"),
-  liveLeak: () => request<{ run_id: string }>("/api/live/leak", { method: "POST" }),
-  liveCanary: () => request<{ run_id: string }>("/api/live/canary", { method: "POST" }),
+  liveStatus: () => request<LiveStatus>(liveUrl("/api/live/status"), undefined, LIVE_BASE),
+  liveLeak: () => request<{ run_id: string }>(liveUrl("/api/live/leak"), { method: "POST" }, LIVE_BASE),
+  liveCanary: () => request<{ run_id: string }>(liveUrl("/api/live/canary"), { method: "POST" }, LIVE_BASE),
   detect: (body: Record<string, unknown>) =>
     request<{ detections: Detection[]; shield?: ShieldReport }>("/api/detect", { method: "POST", body: JSON.stringify(body) }),
   governance: () => request<Governance>("/api/governance"),
@@ -324,8 +354,8 @@ export const api = {
 };
 
 /** Follow a run over Server-Sent Events. Returns a function that stops listening. */
-export function streamRun(id: string, onUpdate: (run: Run) => void, onError?: () => void): () => void {
-  const source = new EventSource(`${API_BASE}/api/runs/${id}/events`);
+export function streamRun(id: string, onUpdate: (run: Run) => void, onError?: () => void, live = false): () => void {
+  const source = new EventSource(live ? `${LIVE_BASE}${liveUrl(`/api/runs/${id}/events`)}` : `${API_BASE}/api/runs/${id}/events`);
   source.onmessage = (event) => {
     const run = JSON.parse(event.data) as Run;
     onUpdate(run);
