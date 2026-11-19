@@ -1,0 +1,68 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T15:51:19.123251+00:00",
+    "environment": {
+      "ghostops_commit": "8e9a09e16bdd8cacb4ce5d8f90ff97ce7f1e2dd3",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:cb31dac3f022dc4dafde1202a5bb49457e7472ae6b4d9de101f4ad4a31899567",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 0,
+          "files": 1,
+          "removed": 2
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": null,
+        "verdict": "not_applicable"
+      },
+      "fix_canary": {
+        "error_rate": 0.0,
+        "image": "ghostops-sample-app:fix-597758",
+        "memory_growth_kib_per_request": 9.9,
+        "verdict": "passed"
+      },
+      "opa_policy": "passed",
+      "regression_test": {
+        "failed_before": false,
+        "passed_after": true,
+        "path": "sample-app/test_ghostops_regression_memory.py",
+        "test_sha256": "be0f8cc3519d94b0acd7def47db7d61a48d75e0a857aa19cd829e4d7b7f2598f"
+      },
+      "sandbox": {
+        "output_sha256": "5e499513b6fb5e30271b51dbed71c62a63dbe1bbb533245aae161dc84962da75",
+        "passed": true,
+        "summary": "PASS. The patch was applied in an isolated Docker sandbox and pytest exited with code 0. All 7 collected tests passed (7 passed, 0 failed, 0 errors, 0 skipped) in 0.14s on Python 3.11.17 with pytest 9.1.1. The covered tests were: test_index, test_health, test_metrics_endpoint, test_leak_endpoint_responds, test_leak_does_not_retain_memory, test_checkout_healthy_by_default, and test_requests_counted_by_status_and_release. The memory-leak regression test (test_leak_does_not_retain_memory) and the metrics and status/release counting tests passed, so the patched behaviour is consistent with expectations. Caveat: this verdict covers only the 7 tests in test_app.py. Coverage of the patch beyond those tests was not reported, and the run was short (0.14s), so it does not show long-running or load behaviour. The patch is cleared on the basis of the test results provided."
+      }
+    },
+    "incident": {
+      "alert_type": "memory_high",
+      "confidence": "0.97",
+      "root_cause": "memory_leak",
+      "run_ref": "7c5979125c37"
+    },
+    "patch": {
+      "diff_sha256": "c128cc1265b803e75070ef33e5bd65d6285acfdc9d8c90f5c9636d5ebf5ee5a8",
+      "explanation": "The root cause is that `leak()` in sample-app/app.py appends a 10 MiB string to the module-level `leak_store` on every request and never releases it. This is why the working set rose from about 24 MB to about 108 MB after 8 calls and triggered the memory_high alert. The patch deletes the intentional-bug comment and the `leak_store.append(...)` line, so /leak still returns HTTP 200 with `{status: ok}` but retains nothing between requests. I left `leak_store`, the gauges and `_update_metrics()` un",
+      "file": "sample-app/app.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 0
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "low"
+    }
+  },
+  "key_fingerprint": "4b18fadff4e030a4",
+  "signature": "kKZkgPTM6eE20z+tNzPGpG0I2fPHn8hsfy9YMA3yCaCt0YnHr+CtbV+/9LlbmHZkIirZ0VsG/9GtTc+5RPjHBQ=="
+}
