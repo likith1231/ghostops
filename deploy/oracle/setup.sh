@@ -119,6 +119,13 @@ if [ -z "$GRAFANA_PASSWORD" ]; then
   echo "$GRAFANA_PASSWORD" | sudo tee /var/lib/ghostops-grafana-password >/dev/null
   sudo chmod 600 /var/lib/ghostops-grafana-password
 fi
+# Shared secret that unlocks the LIVE buttons on the public site (give it to the people who run live demos).
+LIVE_ACCESS_KEY=${LIVE_ACCESS_KEY:-$(sudo cat /var/lib/ghostops-live-key 2>/dev/null || true)}
+if [ -z "$LIVE_ACCESS_KEY" ]; then
+  LIVE_ACCESS_KEY=$(openssl rand -hex 8)
+fi
+echo "$LIVE_ACCESS_KEY" | sudo tee /var/lib/ghostops-live-key >/dev/null
+sudo chmod 600 /var/lib/ghostops-live-key
 kubectl -n monitoring set env deploy/grafana \
   GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer GF_SECURITY_ADMIN_PASSWORD="$GRAFANA_PASSWORD" >/dev/null
 for d in prometheus alertmanager grafana jaeger; do
@@ -162,6 +169,7 @@ User=$(id -un)
 WorkingDirectory=$REPO_DIR
 EnvironmentFile=$REPO_DIR/.env
 EnvironmentFile=/etc/ghostops/runtime.env
+Environment=GHOSTOPS_CORS_ORIGINS=https://ghostops.$DOMAIN_BASE
 ExecStart=$REPO_DIR/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
@@ -205,7 +213,8 @@ EOF
 
 command -v node >/dev/null || die "Node is not installed. Run: bash deploy/oracle/bootstrap.sh"
 (cd web && npm ci --no-audit --no-fund --silent \
-  && NEXT_PUBLIC_GHOSTOPS_API="https://api-ghostops.$DOMAIN_BASE" npm run build >/dev/null)
+  && NEXT_PUBLIC_GHOSTOPS_API="https://api-ghostops.$DOMAIN_BASE" \
+     NEXT_PUBLIC_GHOSTOPS_LIVE_API="https://live-ghostops.$DOMAIN_BASE" npm run build >/dev/null)
 sudo tee /etc/systemd/system/ghostops-web.service >/dev/null <<EOF
 [Unit]
 Description=GhostOps website
@@ -252,6 +261,25 @@ api-ghostops.$DOMAIN_BASE {
 	}
 	respond @unsafe 403
 	reverse_proxy 127.0.0.1:8001
+}
+
+live-ghostops.$DOMAIN_BASE {
+	# The REAL backend (Claude + GitHub token), only for the live buttons and following their runs,
+	# and only with the shared access key (?key=...). Everything else on it stays unreachable.
+	@preflight method OPTIONS
+	@authed {
+		path /api/live/* /api/runs/* /api/status /health
+		query key=$LIVE_ACCESS_KEY
+	}
+	handle @preflight {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle @authed {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		respond \"access key required\" 401
+	}
 }"
 
 cat <<EOF
@@ -259,6 +287,7 @@ cat <<EOF
 GhostOps is running:
   Website (share this): https://ghostops.$DOMAIN_BASE
   Public mock API:      https://api-ghostops.$DOMAIN_BASE/docs
+  LIVE access key:      $LIVE_ACCESS_KEY   (enter it on the website to unlock the LIVE buttons)
   Grafana dashboards:   https://grafana.$DOMAIN_BASE   (admin / $GRAFANA_PASSWORD)
   (the first visit can take ~20 s while the HTTPS certificates are issued)
 

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { STAGES, api, streamRun, type Activity, type LiveProgress, type LiveStatus, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
+import { LIVE_NEEDS_KEY, STAGES, api, getLiveKey, setLiveKey, streamRun, type Activity, type LiveProgress, type LiveStatus, type Diagnosis, type Patch, type PrResult, type Run, type Scenario, type StageName, type Validation } from "@/lib/api";
 import type { BackendState } from "@/lib/useBackend";
 import CodeDiff from "./CodeDiff";
 import MemoryChart from "./MemoryChart";
@@ -209,6 +209,8 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
   const [selected, setSelected] = useState("b1");
   const [run, setRun] = useState<Run | null>(null);
   const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
+  const [liveKey, setKey] = useState("");
+  const [keyDraft, setKeyDraft] = useState("");
   const following = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const stop = useRef<(() => void) | null>(null);
@@ -274,15 +276,20 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
 
   /** Start following a run's live stream from a clean slate. */
   const follow = useCallback(
-    (runId: string) => {
+    (runId: string, live = false) => {
       cleanup();
       shown.current = null;
       following.current = runId;
       setRun(null); // clear the previous run at once instead of leaving its result on screen
       // SSE first; if the stream drops, fall back to polling.
-      stop.current = streamRun(runId, update, () => {
-        poll.current = setInterval(() => api.run(runId).then(update).catch(() => undefined), 1000);
-      });
+      stop.current = streamRun(
+        runId,
+        update,
+        () => {
+          poll.current = setInterval(() => api.run(runId, live).then(update).catch(() => undefined), 1000);
+        },
+        live,
+      );
     },
     [cleanup, update],
   );
@@ -292,7 +299,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
     try {
       const { run_id } =
         scenario === "live" ? await api.liveLeak() : scenario === "live-canary" ? await api.liveCanary() : await api.simulate(scenario);
-      follow(run_id);
+      follow(run_id, scenario === "live" || scenario === "live-canary");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -310,12 +317,18 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
 
   // Whether the real cluster is reachable for a live incident.
   useEffect(() => {
+    const saved = getLiveKey();
+    setKey(saved);
+    setKeyDraft(saved);
+  }, []);
+
+  useEffect(() => {
     if (!backend.online) return;
     const check = () => api.liveStatus().then(setLiveStatus).catch(() => setLiveStatus(null));
     check();
     const id = setInterval(check, 10000);
     return () => clearInterval(id);
-  }, [backend.online]);
+  }, [backend.online, liveKey]);
 
   // The command palette can start a scenario from anywhere on the page.
   useEffect(() => {
@@ -355,7 +368,7 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
               key={id}
               onClick={() => setSelected(id)}
               disabled={!liveStatus?.ready}
-              title={liveStatus?.ready ? hint : liveStatus?.error ?? "checking the cluster…"}
+              title={liveStatus?.ready ? hint : liveStatus?.error ?? (LIVE_NEEDS_KEY && !liveKey ? "enter the access key to unlock LIVE" : "checking the cluster…")}
               className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-40 ${
                 selected === id ? "border-bad/70 bg-bad/15 text-white" : "border-bad/30 bg-black/30 text-mist hover:text-white"
               }`}
@@ -364,6 +377,28 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
               <span className="font-mono text-bad">LIVE</span> {label}
             </button>
           ))}
+          {LIVE_NEEDS_KEY && (
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setLiveKey(keyDraft);
+                setKey(keyDraft.trim());
+              }}
+            >
+              <input
+                type="password"
+                value={keyDraft}
+                onChange={(e) => setKeyDraft(e.target.value)}
+                placeholder={liveStatus?.ready ? "LIVE unlocked" : "LIVE access key"}
+                aria-label="LIVE access key"
+                className="w-32 rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-xs text-white placeholder:text-mist"
+              />
+              <button type="submit" className="rounded-full border border-white/15 px-2.5 py-1.5 text-xs text-mist hover:text-white">
+                unlock
+              </button>
+            </form>
+          )}
           <span className="mx-1 h-4 w-px bg-white/10" />
           {(scenarios.length ? scenarios : [{ id: "b1", title: "Memory leak -> OOM" }]).map((s) => (
             <button
