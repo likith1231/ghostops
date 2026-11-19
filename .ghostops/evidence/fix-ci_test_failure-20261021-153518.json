@@ -1,0 +1,63 @@
+{
+  "bundle": {
+    "created_at": "2026-10-21T15:35:18.057196+00:00",
+    "environment": {
+      "ghostops_commit": "e386948e0cc2781d4a180b8f4e0e9efcbbcaa5da",
+      "python": "3.12.3",
+      "sandbox_image": {
+        "id": "sha256:cb31dac3f022dc4dafde1202a5bb49457e7472ae6b4d9de101f4ad4a31899567",
+        "name": "ghostops-sandbox:py3.11"
+      }
+    },
+    "format": "ghostops-evidence/v1",
+    "gates": {
+      "blast_radius": {
+        "metrics": {
+          "added": 1,
+          "files": 1,
+          "removed": 1
+        },
+        "passed": true
+      },
+      "counterfactual_replay": {
+        "recorded_requests": null,
+        "verdict": "not_applicable"
+      },
+      "fix_canary": null,
+      "opa_policy": "passed",
+      "regression_test": {
+        "failed_before": true,
+        "passed_after": true,
+        "path": "sample-app/test_ghostops_regression_math.py",
+        "test_sha256": "f1207cb10a8870d1e1ef13f48eea32493aee356cc45169d1a5c7ef482708a014"
+      },
+      "sandbox": {
+        "output_sha256": "c9c5cf3034b61330592ace58c655eedfcaa00de8b1b79075435af183cf1dc44f",
+        "passed": true,
+        "summary": "The patch was applied in an isolated Docker container and pytest exited with code 0. Two tests were collected and both passed (test_math_utils.py::test_add and test_math_utils.py::test_multiply), with no failures, errors, skips, or warnings. The run took 0.01s on Python 3.11.17 with pytest 9.1.1. Verdict: PASS. Caveat: the suite is small (2 tests), so this verdict only covers the behavior those tests exercise."
+      }
+    },
+    "incident": {
+      "alert_type": "ci_failure",
+      "confidence": "0.97",
+      "root_cause": "ci_test_failure",
+      "run_ref": "11973e742ade"
+    },
+    "patch": {
+      "diff_sha256": "cb3540ddd0db8e98b98b2b899dcfb2cbe63c291d55cea816c60e3a35b094f5f7",
+      "explanation": "multiply() in sample-app/math_utils.py was implemented using addition (`a + b`) rather than multiplication, so multiply(2, 4) returned 6 instead of 8 and failed test_multiply. The one-line change to `return a * b` fixes the root cause. The test expectations (multiply(2, 4) == 8 and multiply(3, 3) == 9) are correct and both pass with this change. test_add and all other code are left untouched.",
+      "file": "sample-app/math_utils.py"
+    },
+    "risk": {
+      "decision": "auto_merge_staging",
+      "level": "low",
+      "score": 6
+    },
+    "shield": {
+      "quarantined": 0,
+      "risk": "none"
+    }
+  },
+  "key_fingerprint": "4b18fadff4e030a4",
+  "signature": "mZrJcIgFvk06itR3Ija5lja3EOuKnx0xHHM2QSY3hp+1KU1ww5PzZfcMdYnVIrEsBk0gywVnlOw03uGUrrRAAg=="
+}
