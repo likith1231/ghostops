@@ -91,12 +91,32 @@ export function nodeStates(run: Run | null): NodeState[] {
   let validation = st("validation");
   if (validation === "done" && (run.stages.validation.data as Validation).passed === false) validation = "error";
   let deploy = st("deploy");
-  if (deploy === "done") {
-    const pr = run.stages.deploy.data as PrResult;
-    // A completed rollback needs no PR: the remediation is already done.
-    deploy = pr.pr_created || pr.reason === "rollback" ? "done" : pr.reason === "mock_mode" ? "held" : "error";
-  }
+  if (deploy === "done") deploy = deliveryState(run.stages.deploy.data as PrResult);
   return ["done", st("diagnosis"), st("patch"), validation, deploy];
+}
+
+/**
+ * One rule for how a run ends, shared by the 3D node, the bottom banner and the PR card.
+ * A validated fix is "resolved" however it was delivered (PR opened, rolled back, already
+ * fixed, or simulated in mock mode); only a human-needed stop is amber; a rejected fix is red.
+ */
+const NEEDS_HUMAN = new Set(["needs_human", "autonomy_paused"]);
+
+export function deliveryState(pr: PrResult): NodeState {
+  if (pr.pr_created) return "done";
+  if (pr.reason && NEEDS_HUMAN.has(pr.reason)) return "held";
+  if (pr.reason && ["rollback", "mock_mode", "duplicate_of_open_pr", "already_remediated"].includes(pr.reason)) return "done";
+  return "error";
+}
+
+export type Outcome = { tone: "ok" | "warn" | "bad"; headline: string };
+
+export function finalOutcome(run: Run): Outcome {
+  if (run.status === "failed") return { tone: "bad", headline: "✕ Fix rejected by the safety gates" };
+  if (run.status !== "passed") return { tone: "bad", headline: `✕ ${run.error ?? "Run failed"}` };
+  const pr = run.stages.deploy.data as PrResult;
+  if (pr.reason && NEEDS_HUMAN.has(pr.reason)) return { tone: "warn", headline: "⚠ Fix validated, waiting on a human" };
+  return { tone: "ok", headline: "✓ Fix validated and resolved" };
 }
 
 function seconds(run: Run): string {
@@ -427,8 +447,8 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
         </div>
         {run && run.status !== "running" && (
           <div className="absolute inset-x-0 bottom-0 z-40 flex flex-wrap items-center justify-between gap-2 bg-gradient-to-t from-void/90 to-transparent p-4 text-sm">
-            <span className={run.status === "passed" ? "text-ok" : "text-bad"}>
-              {run.status === "passed" ? "✓ Fix validated" : run.status === "failed" ? "✕ Fix rejected by the safety gates" : `✕ ${run.error}`}
+            <span className={{ ok: "text-ok", warn: "text-warn", bad: "text-bad" }[finalOutcome(run).tone]}>
+              {finalOutcome(run).headline}
             </span>
             <span className="font-mono text-xs text-mist">
               detect → {run.status === "passed" ? "verified fix" : "verdict"} in <span className="text-white">{seconds(run)}</span>
@@ -557,8 +577,8 @@ export default function LiveRun({ backend, onFinished }: { backend: BackendState
               </p>
             ) : pr.reason === "mock_mode" ? (
               <p>
-                Validated fix ready. In mock mode GhostOps holds the PR instead of opening one; set{" "}
-                <code className="font-mono text-warn">GHOSTOPS_MOCK_CREATE_PR=1</code> to open it for real.
+                <span className="font-semibold text-ok">Resolved (demo).</span> The fix passed every gate. This demo is mock-only, so
+                no real PR is opened.
               </p>
             ) : (
               <p>No PR — <span className="font-mono text-bad">{pr.reason}</span>. Nothing reaches a human until it passes both gates.</p>

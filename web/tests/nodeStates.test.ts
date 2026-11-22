@@ -37,9 +37,12 @@ describe("nodeStates", () => {
   it.each([
     [{ pr_created: true }, "done"],
     [{ pr_created: false, reason: "rollback" }, "done"],
-    [{ pr_created: false, reason: "mock_mode" }, "held"],
+    [{ pr_created: false, reason: "mock_mode" }, "done"],
+    [{ pr_created: false, reason: "duplicate_of_open_pr" }, "done"],
+    [{ pr_created: false, reason: "already_remediated" }, "done"],
+    [{ pr_created: false, reason: "autonomy_paused" }, "held"],
     [{ pr_created: false, reason: "validation_failed" }, "error"],
-    [{ pr_created: false, reason: "needs_human" }, "error"],
+    [{ pr_created: false, reason: "needs_human" }, "held"],
   ])("PR node for %j is %s", (pr, expected) => {
     const r = run({ diagnosis: ["done"], patch: ["done"], validation: ["done", { passed: true }], deploy: ["done", pr] });
     expect(nodeStates(r)[4]).toBe(expected);
