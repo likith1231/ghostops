@@ -22,7 +22,7 @@ const STATE_TEXT: Record<NodeState, string> = {
   running: "working…",
   done: "done",
   error: "blocked",
-  held: "held (mock)",
+  held: "needs human",
 };
 
 /** Nodes run left-to-right on wide canvases and top-to-bottom (labels beside them) on narrow ones. */
